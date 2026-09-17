@@ -1,0 +1,9 @@
+{
+  "id": "nudge-reminders",
+  "name": "Nudge",
+  "version": "0.1.0",
+  "minAppVersion": "1.8.0",
+  "description": "A glass board for the things you must not forget. Reminders live as plain checkbox lines in one note, with due dates, priorities, repeats and a calendar feed your phone can alert you from.",
+  "author": "Ruan Pienaar",
+  "isDesktopOnly": false
+}

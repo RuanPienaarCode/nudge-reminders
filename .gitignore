@@ -1,0 +1,7 @@
+node_modules/
+.DS_Store
+_preview/bundle.js
+_preview/nudge.css
+# Build output — regenerated from src/ by ./build.sh; ships as release assets.
+/main.js
+/styles.css

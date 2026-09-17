@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nudge — preview</title>
+<link rel="stylesheet" href="nudge.css">
+<style>
+  html, body { margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b0b0d; color: #ddd;
+    --text-normal: #ddd; --text-muted: #999; --text-faint: #666; --background-primary: #1e1e1e; --background-secondary: #262626;
+    --background-modifier-hover: #2e2e2e; --background-modifier-active-hover: #363636; --background-modifier-border: #383838; --background-modifier-border-hover: #4a4a4a;
+    --background-modifier-form-field: #2a2a2a; --text-accent: #7aa7ff; --interactive-accent: #5b7cfa; --interactive-accent-hover: #6b8bff; --text-on-accent: #fff; --text-error: #ff6b6b; }
+  body.theme-light { background: #e9e8e4; color: #222; --text-normal: #222; --text-muted: #666; --text-faint: #999; --background-primary: #fff; --background-secondary: #f4f4f4;
+    --background-modifier-hover: #ececec; --background-modifier-active-hover: #e2e2e2; --background-modifier-border: #ddd; --background-modifier-border-hover: #ccc; --background-modifier-form-field: #fff; }
+  button:not(.clickable-icon) { background: #f0f0f0; box-shadow: inset 0 0 0 1px #ccc; border: 0; border-radius: 6px; padding: 4px 12px; font-size: 14px; height: 30px; }
+  input[type="text"] { background: #2a2a2a; border: 1px solid #383838; border-radius: 6px; padding: 5px 8px; color: inherit; }
+  .wrap { position: absolute; top: 18px; right: 18px; bottom: 18px; left: 18px; display: flex; gap: 16px; }
+  .frame { flex: 1 1 auto; border-radius: 14px; overflow: hidden; box-shadow: 0 10px 46px rgba(0,0,0,.5); background: #111; max-width: 1000px; margin: 0 auto; }
+  body.is-mobile .frame { max-width: 390px; }
+  .side { flex: 0 0 330px; display: flex; flex-direction: column; gap: 8px; }
+  .side h2 { margin: 0; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #777; font-weight: 700; }
+  #note { flex: 1 1 auto; margin: 0; overflow: auto; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1.55; color: #b9c2cf; background: #15171c; border: 1px solid #262a33; border-radius: 12px; padding: 12px; }
+  @media (max-width: 1100px) { .side { display: none; } }
+  .workspace-leaf-content, .view-content { height: 100%; }
+  .stub-notice { position: fixed; top: 12px; right: 12px; background: #222; color: #fff; padding: 8px 12px; border-radius: 8px; font-size: 13px; z-index: 50; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+  .stub-modal-bg { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.5); z-index: 40; }
+  .stub-modal { position: fixed; top: 8vh; left: 50%; transform: translateX(-50%); width: min(540px, 92vw); background: #1e1e1e; border-radius: 16px; padding: 22px; z-index: 41; box-shadow: 0 20px 70px rgba(0,0,0,.6); max-height: 84vh; overflow: auto; }
+  body.theme-light .stub-modal { background: #fff; }
+  .stub-menu { position: fixed; z-index: 60; background: #1e1e1e; border: 1px solid #333; border-radius: 10px; box-shadow: 0 10px 34px rgba(0,0,0,.5); padding: 6px; display: flex; flex-direction: column; min-width: 180px; }
+  .stub-menu button { text-align: left; background: transparent; box-shadow: none; padding: 8px 12px; border-radius: 6px; font-size: 13.5px; height: auto; color: inherit; }
+  .stub-menu button:hover { background: #2c2c2c; }
+</style>
+</head>
+<body class="theme-dark">
+<div class="wrap">
+  <div class="frame"><div class="workspace-leaf-content"><div id="app" class="view-content"></div></div></div>
+  <div class="side"><h2>Reminders.md — live</h2><pre id="note"></pre></div>
+</div>
+<script src="bundle.js"></script>
+</body>
+</html>
