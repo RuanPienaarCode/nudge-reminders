@@ -191,4 +191,28 @@ assert.strictEqual(T.parseNote('# Reminders\n- [ ] Loose\n')[0].group, '');
 assert.deepStrictEqual(T.groupsOf('# Reminders\n- [ ] Loose\n'), []);
 assert.strictEqual(T.parseNote('## Family\n- [ ] A\n# Reminders\n- [ ] B\n')[1].group, '',
   'a title further down ends the section above it');
+/* ---- lossless on the awkward lines (audit, 27 Sep 2026) ---- */
+const round = l => T.serializeLine(T.parseLine(l));
+let p;
+p = T.parseLine('- [ ] Call dentist ⏰️ 09:00 📅 2026-10-01');
+assert.deepStrictEqual([p.title, p.time], ['Call dentist', '09:00'], 'a marker with U+FE0F is still the marker');
+p = T.parseLine('- [ ] Call dentist 📅 tomorrow');
+assert.deepStrictEqual([p.title, p.due], ['Call dentist 📅 tomorrow', ''], 'a value that does not parse keeps its marker');
+assert.strictEqual(round('- [ ] Call dentist 📅 tomorrow'), '- [ ] Call dentist 📅 tomorrow');
+p = T.parseLine('- [ ] Check `📅 2020-01-01` format 📅 2026-10-01');
+assert.deepStrictEqual([p.title, p.due], ['Check `📅 2020-01-01` format', '2026-10-01'], 'a code span is text');
+p = T.parseLine('- [ ] Read [[Trip 📅 2020-05-05]] notes');
+assert.deepStrictEqual([p.title, p.due], ['Read [[Trip 📅 2020-05-05]] notes', ''], 'so is a wikilink');
+p = T.parseLine('- [ ] Pay rent 📅 2026-10-01 ^rent1');
+assert.deepStrictEqual([p.title, p.blockId], ['Pay rent', '^rent1']);
+assert.strictEqual(T.serializeLine(Object.assign({}, p, { priority: 'high' })), '- [ ] Pay rent 📅 2026-10-01 ⏫ ^rent1', 'the block id is written last');
+p = T.parseLine('- [ ] Fix issue #12 today 📅 2026-10-01');
+assert.deepStrictEqual([p.title, p.tags], ['Fix issue #12 today', []], 'an all-digit #12 is not a tag');
+p = T.parseLine('- [ ] crlf 📅 2026-10-01\r');
+assert.strictEqual(p && p.due, '2026-10-01', 'a CRLF line parses');
+assert.deepStrictEqual(T.parseNote('# R\r\n## Home\r\n- [ ] a 📅 2026-10-01\r\n').map(i => `${i.group}:${i.title}`), ['Home:a'], 'and so does a CRLF note');
+assert.deepStrictEqual(T.listsOf('## A\r\n## B\r\n'), ['A', 'B']);
+/* where Tasks' trailing run starts */
+assert.strictEqual(T.trailingRunStart('Call #fam 📅 2026-10-01 ⏫'), 5);
+assert.strictEqual(T.trailingRunStart('Just words'), 10);
 console.log('tasks OK');

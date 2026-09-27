@@ -15,4 +15,4 @@ for f in main.js styles.css manifest.json; do
 done
 [ "$fail" = 0 ] || exit 1
 echo "Deployed to $DEST"
-echo "In Obsidian: Settings → Community plugins → enable 'Nudge' (reload it if it was already on)."
+echo "In Obsidian: Settings → Community plugins → enable 'Nudge Reminders' (reload it if it was already on)."

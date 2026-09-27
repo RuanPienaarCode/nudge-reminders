@@ -535,6 +535,26 @@
   .nd-app .nd-add-hint { position: static; margin: 0 0 6px 4px; }
 }
 
+/* ---- touch ------------------------------------------------------------------ */
+/* A finger needs about 44px. The tick circle keeps its 22px look; a clear
+   ::after widens what it answers to. The other small controls grow. */
+.is-mobile .nd-app .nd-page button.nd-check { position: relative; }
+.is-mobile .nd-app .nd-page button.nd-check::after {
+  content: ''; position: absolute; top: -11px; right: -11px; bottom: -11px; left: -11px; border-radius: 50%;
+}
+.is-mobile .nd-app .nd-page button.nd-act,
+.is-mobile .nd-app .nd-page button.nd-side-toggle {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px;
+}
+.is-mobile .nd-modal-shell .nd-modal button.nd-quickdate,
+.is-mobile .nd-modal-shell .nd-modal button.nd-seg-b,
+.is-mobile .nd-modal-shell .nd-modal button.nd-btn { min-height: 44px; }
+/* No hover to reveal a row's actions on a touch screen, whatever the pane's
+   width and whether or not Obsidian calls it mobile. */
+@media (hover: none) {
+  .nd-app .nd-row-acts { opacity: 1; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .nd-app .nd-bg { animation: none; }
   .nd-app.is-narrow .nd-side { transition: none; }

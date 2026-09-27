@@ -11,7 +11,9 @@
       re-serialising it, so the user's own spacing and token order survive
       being touched by this plugin. Only an explicit edit re-spells a line.
 
-   Vault API only: this runs on iOS as well as the desktop. */
+   Vault API only: this runs on iOS as well as the desktop. Every change is
+   made inside vault.process, one at a time, so nothing typed elsewhere in
+   the meantime is lost. */
 
 const { normalizePath } = require('obsidian');
 const T = require('./tasks');
@@ -26,43 +28,125 @@ const DATE = '\\d{4}-\\d{2}-\\d{2}';
 
 /* ---- raw-line surgery ------------------------------------------------ */
 
+/* Surgery happens on a MASKED line: `code spans` and [[wikilinks]] are
+   swapped for placeholders first, so a 📅 quoted inside one is never the
+   token we edit. A trailing ^block-id is held aside and put back last. */
+function surgery(raw, fn) {
+  const [line, block] = T.splitBlock(raw);
+  const { masked, restore } = T.maskSpans(line);
+  return restore(fn(masked)) + block;
+}
+
 function flipBox(raw, done) {
   return String(raw).replace(/^(\s*(?:[-*+]|\d+\.)[ \t]+\[)[ xX](\])/, `$1${done ? 'x' : ' '}$2`);
 }
 
+/* The markers that mean the same field. The parser reads all of them. */
+const FAMILY = {
+  '📅': '(?:📅|📆|🗓)\\uFE0F?',
+  '⏳': '(?:⏳|⌛)\\uFE0F?',
+};
+const markerRe = emoji => FAMILY[emoji] || `${reEsc(emoji)}\\uFE0F?`;
+
 function dropToken(raw, emoji) {
-  return String(raw).replace(new RegExp(`\\s*${reEsc(emoji)}\\s*${DATE}`, 'g'), '').replace(/[ \t]+$/, '');
+  return surgery(raw, s => s.replace(new RegExp(`\\s*${markerRe(emoji)}\\s*${DATE}`, 'g'), '').replace(/[ \t]+$/, ''));
 }
 
+/* Change a date token in place. It is the LAST one on the line that we
+   change, because that is the one the parser reads — rewriting an earlier
+   stray would make snooze look like it did nothing. */
 function setDateToken(raw, emoji, value) {
-  const re = new RegExp(`(${reEsc(emoji)}\\s*)${DATE}`);
-  if (re.test(raw)) return String(raw).replace(re, `$1${value}`);
-  return `${String(raw).replace(/[ \t]+$/, '')} ${emoji} ${value}`;
+  return surgery(raw, s => {
+    const re = new RegExp(`(${markerRe(emoji)}\\s*)${DATE}`, 'g');
+    let last = null;
+    for (let m = re.exec(s); m; m = re.exec(s)) last = m;
+    if (last) return s.slice(0, last.index) + last[1] + value + s.slice(last.index + last[0].length);
+    return `${s.replace(/[ \t]+$/, '')} ${emoji} ${value}`;
+  });
 }
 
-/* Every Tasks field marker — everything the line vocabulary knows except ⏰,
-   which is ours and which Tasks reads as description text. */
-const FIELD_RE = /(🔺|⏫|🔼|🔽|⏬|📅|📆|🗓️|🗓|✅|➕|🛫|⏳|⌛|🔁|🆔|⛔)/;
-const TIME_TOKEN = /⏰️?[ \t]*(\d{1,2}:\d{2})/;
+const TIME_TOKEN = /⏰\uFE0F?[ \t]*(\d{1,2}:\d{2})/g;
 
 /* Tasks reads fields from the END of the line and stops at the first thing
-   that isn't one, so a ⏰ written after 📅 (Nudge's first line order) hides the
-   due date from Tasks. Move just the ⏰ token to before the first Tasks field.
-   Surgery, not a re-spelling: nothing else on the line moves, so a trailing
-   ^block-id stays where Obsidian needs it. A line that is fine comes back
-   identical. */
+   that isn't one, so a ⏰ inside that trailing run (Nudge's first line
+   order put it after 📅) hides every field before it from Tasks. Move just
+   the ⏰ token to where the run begins. Surgery, not a re-spelling: nothing
+   else moves, the ^block-id stays last, and a ⏰ inside a code span or a
+   wikilink is not ours to touch. A line that is fine comes back identical. */
 function liftTime(raw) {
   const s = String(raw);
-  const m = T.LINE_RE.exec(s);
+  const cr = /\r$/.test(s) ? '\r' : '';
+  const src = cr ? s.slice(0, -1) : s;
+  const m = T.LINE_RE.exec(src);
   if (!m) return s;
   const body = m[4];
-  const head = s.slice(0, s.length - body.length);
-  const tm = TIME_TOKEN.exec(body);
-  const fm = FIELD_RE.exec(body);
-  if (!tm || !fm || tm.index < fm.index) return s;
-  const rest = `${body.slice(0, tm.index).replace(/[ \t]+$/, '')} ${body.slice(tm.index + tm[0].length).replace(/^[ \t]+/, '')}`.replace(/[ \t]+$/, '');
-  const before = rest.slice(0, fm.index).replace(/[ \t]+$/, '');
-  return `${head}${before ? before + ' ' : ''}⏰ ${tm[1]} ${rest.slice(fm.index)}`;
+  const head = src.slice(0, src.length - body.length);
+  const [line, block] = T.splitBlock(body);
+  const { masked, restore } = T.maskSpans(line);
+  let tm = null;
+  for (let x = TIME_TOKEN.exec(masked); x; x = TIME_TOKEN.exec(masked)) tm = x;
+  TIME_TOKEN.lastIndex = 0;
+  if (!tm) return s;
+  const left = masked.slice(0, tm.index).replace(/[ \t]+$/, '');
+  const right = masked.slice(tm.index + tm[0].length).replace(/^[ \t]+/, '');
+  const without = left && right ? `${left} ${right}` : left + right;
+  let at = T.trailingRunStart(without);
+  /* Tags leading the run can stay where the user put them — Tasks reads a
+     tag anywhere — so ⏰ lands just before the first real field. */
+  for (let g = /^#[^\s#]+\s+/.exec(without.slice(at)); g; g = /^#[^\s#]+\s+/.exec(without.slice(at))) at += g[0].length;
+  const was = left && right ? left.length + 1 : left.length;
+  if (was <= at) return s;
+  const before = without.slice(0, at).replace(/[ \t]+$/, '');
+  const lifted = `${before ? before + ' ' : ''}⏰ ${tm[1]} ${without.slice(at)}`.replace(/[ \t]+$/, '');
+  return `${head}${restore(lifted)}${block}${cr}`;
+}
+
+/* The note's own line ending. A note saved on Windows is CRLF throughout;
+   we keep it that way rather than half-converting it. */
+function splitLines(text) {
+  const t = String(text || '');
+  const eol = t.indexOf('\r\n') !== -1 ? '\r\n' : '\n';
+  return { lines: t.split(eol), eol };
+}
+
+/* The ## heading a line sits under ('' above the first one). */
+function groupAt(lines, i) {
+  for (let n = i - 1; n >= 0; n--) {
+    if (!T.HEADING_RE.test(lines[n])) continue;
+    const g = T.GROUP_RE.exec(lines[n]);
+    return g ? g[1].trim() : '';
+  }
+  return '';
+}
+
+/* Put a line under a heading, after its last real line — not into the next
+   section, and not on top of the blank line that separates them. A heading
+   that doesn't exist yet is made at the foot of the note. No group at all:
+   an Inbox once the note has sections, the foot of a flat note otherwise. */
+function placeLine(lines, groupName, line) {
+  let group = String(groupName || '').trim();
+  if (!group && T.groupsOf(lines.join('\n')).length) group = INBOX;
+  if (group) {
+    const at = lines.findIndex(l => {
+      const h = T.HEADING_RE.exec(l);
+      return !!h && h[1].trim() === group;
+    });
+    if (at !== -1) {
+      let end = at + 1;
+      let last = at;
+      while (end < lines.length && !T.HEADING_RE.test(lines[end])) {
+        if (lines[end].trim()) last = end;
+        end++;
+      }
+      lines.splice(last + 1, 0, line);
+      return;
+    }
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    lines.push('', `## ${group}`, line, '');
+    return;
+  }
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  lines.push(line, '');
 }
 
 /* ---- the store -------------------------------------------------------- */
@@ -82,8 +166,13 @@ function makeStore(plugin) {
     return { file: f, text: await v.read(f) };
   }
 
+  /* The last text we wrote, so the vault's modify event for our own write
+     can be told apart from an edit made by hand or by sync. */
+  const remember = text => { plugin._lastText = text; };
+
   async function writeText(text) {
     stamp();
+    remember(text);
     const f = file();
     if (f) { await v.modify(f, text); return f; }
     await ensureFolder(path());
@@ -110,33 +199,66 @@ function makeStore(plugin) {
     return { text, items, groups: T.groupsOf(text), lists: T.listsOf(text) };
   }
 
-  /* Find the line again by content when its number no longer matches — the
-     user may have typed above it since we rendered. */
+  /* EVERY change to the note goes through here. vault.process reads, changes
+     and writes in one step, so an edit that lands from sync, from Vista or
+     by hand between our read and our write is not overwritten. `fn` gets
+     the lines and changes them in place; returning { ok: false } leaves
+     the file exactly as it was. */
+  async function edit(fn) {
+    const f = file();
+    if (!f) return { ok: false };
+    let out = { ok: false };
+    const apply = text => {
+      const { lines, eol } = splitLines(text);
+      out = Object.assign({ ok: true }, fn(lines) || {});
+      if (!out.ok) return text;
+      const next = lines.join(eol);
+      if (next !== text) { stamp(); remember(next); }
+      return next;
+    };
+    if (typeof v.process === 'function') await v.process(f, apply);
+    else {
+      const text = await v.read(f);
+      const next = apply(text);
+      if (next !== text) await v.modify(f, next);
+    }
+    return out;
+  }
+
+  /* Find the line again when its number no longer matches — the user may
+     have typed above it since we rendered. An identical line can sit in two
+     lists ("Take pills" under Home and under Work), so a match must be in
+     the reminder's own list, and the nearest one to where it was. */
   function locate(lines, item) {
     if (!item) return -1;
     if (lines[item.line] === item.raw) return item.line;
-    const i = lines.indexOf(item.raw);
-    if (i !== -1) return i;
+    const inGroup = n => item.group === undefined || groupAt(lines, n) === (item.group || '');
+    const nearest = cands => {
+      const from = item.line >= 0 ? item.line : 0;
+      return cands.reduce((best, n) => (best === -1 || Math.abs(n - from) < Math.abs(best - from) ? n : best), -1);
+    };
+    const exact = [];
+    for (let n = 0; n < lines.length; n++) if (lines[n] === item.raw && inGroup(n)) exact.push(n);
+    if (exact.length) return nearest(exact);
     /* Last resort: the same reminder with a different tail (someone edited
-       the date in the note while the board was open). */
+       the date in the note while the board was open) — but only when there
+       is exactly one such line, in the same list, in the same state. */
     const t = T.parseLine(item.raw);
     if (!t) return -1;
+    const same = [];
     for (let n = 0; n < lines.length; n++) {
       const c = T.parseLine(lines[n]);
-      if (c && c.title === t.title && c.group === undefined) return n;
+      if (c && c.title === t.title && c.done === t.done && inGroup(n)) same.push(n);
     }
-    return -1;
+    return same.length === 1 ? same[0] : -1;
   }
 
-  async function withLines(item, fn) {
-    const { text } = await readText();
-    if (!text) return { ok: false };
-    const lines = text.split('\n');
-    const i = locate(lines, item);
-    if (i === -1) return { ok: false };
-    const res = fn(lines, i) || {};
-    await writeText(lines.join('\n'));
-    return Object.assign({ ok: true }, res);
+  function withLines(item, fn) {
+    return edit(lines => {
+      const i = locate(lines, item);
+      if (i === -1) return { ok: false };
+      return fn(lines, i);
+    });
   }
 
   /* ---- add ------------------------------------------------------------ */
@@ -145,43 +267,10 @@ function makeStore(plugin) {
     const item = Object.assign({ priority: 'normal', tags: [] }, fields);
     const line = T.serializeLine(item);
     await ensureFile();
-    const { text } = await readText();
-    const lines = text.split('\n');
     /* A reminder with no group of its own must not fall under whatever
-       heading happens to be last in the note — it would silently join that
-       section and come back wearing its name. Once the note uses sections at
-       all, an ungrouped reminder gets an Inbox of its own; a flat note stays
-       flat, because no ceremony is owed to a list that has none. */
-    let group = String(fields.group || '').trim();
-    if (!group && T.groupsOf(text).length) group = INBOX;
-
-    if (group) {
-      const at = lines.findIndex(l => {
-        const h = T.HEADING_RE.exec(l);
-        return !!h && h[1].trim() === group;
-      });
-      if (at !== -1) {
-        /* Under this heading, after its last real line — not into the next
-           section, and not on top of the blank line that separates them. */
-        let end = at + 1;
-        let last = at;
-        while (end < lines.length && !T.HEADING_RE.test(lines[end])) {
-          if (lines[end].trim()) last = end;
-          end++;
-        }
-        lines.splice(last + 1, 0, line);
-        await writeText(lines.join('\n'));
-        return line;
-      }
-      while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-      lines.push('', `## ${group}`, line, '');
-      await writeText(lines.join('\n'));
-      return line;
-    }
-
-    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-    lines.push(line, '');
-    await writeText(lines.join('\n'));
+       heading happens to be last in the note — placeLine gives it an Inbox
+       once the note uses sections at all. */
+    await edit(lines => { placeLine(lines, fields.group, line); });
     return line;
   }
 
@@ -191,19 +280,21 @@ function makeStore(plugin) {
     const n = String(name || '').replace(/\s+/g, ' ').trim().replace(/^#+\s*/, '');
     if (!n) return { ok: false, name: '' };
     await ensureFile();
-    const { text } = await readText();
-    if (T.listsOf(text).indexOf(n) !== -1) return { ok: true, name: n, existed: true };
-    const lines = text.split('\n');
-    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-    lines.push('', `## ${n}`, '');
-    await writeText(lines.join('\n'));
-    return { ok: true, name: n, existed: false };
+    let existed = false;
+    await edit(lines => {
+      if (T.listsOf(lines.join('\n')).indexOf(n) !== -1) { existed = true; return { ok: false }; }
+      while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+      lines.push('', `## ${n}`, '');
+    });
+    return { ok: true, name: n, existed };
   }
 
   /* ---- tick ------------------------------------------------------------ */
 
   /* Ticking a repeating reminder leaves the next one behind, in the place the
-     old one held, and keeps the tick itself as a record. */
+     old one held, and keeps the tick itself as a record. A repeat we can't
+     work out the next date for is NOT ticked: ticking it would end the
+     series silently, which is the one thing a reminder must never do. */
   async function toggle(item, today) {
     const day = D.isISO(today) ? today : D.todayISO();
     let rolled = null;
@@ -215,24 +306,46 @@ function makeStore(plugin) {
         lines[i] = dropToken(flipBox(raw, false), '✅');
         return {};
       }
-      const next = cur && cur.repeat ? R.nextDue(cur.repeat, cur.due, day, day) : '';
-      lines[i] = setDateToken(dropToken(flipBox(raw, true), '✅'), '✅', day);
+      let next = '';
+      if (cur && cur.repeat) {
+        /* No due date: the next one counts from today. */
+        const from = cur.due || day;
+        next = R.nextDue(cur.repeat, from, day, day);
+        if (!next) return { ok: false, reason: 'repeat', repeat: cur.repeat };
+      }
+      const [plain, block] = T.splitBlock(raw);
+      /* The ^block-id follows the reminder that is still open, so a link to
+         it keeps pointing at something to do. */
+      lines[i] = setDateToken(dropToken(flipBox(next ? plain : raw, true), '✅'), '✅', day);
       if (next) {
-        const fresh = setDateToken(dropToken(raw, '✅'), '📅', next);
+        const shift = D.diffDays(cur.due || day, next);
+        let fresh = setDateToken(dropToken(plain, '✅'), '📅', next);
+        /* Start and scheduled dates move with the due date, as Tasks does. */
+        if (cur.start) fresh = setDateToken(fresh, '🛫', D.addDays(cur.start, shift));
+        if (cur.scheduled) fresh = setDateToken(fresh, '⏳', D.addDays(cur.scheduled, shift));
+        fresh += block;
         lines.splice(i, 0, fresh);
         rolled = T.parseLine(fresh);
       }
       return {};
     });
-    return { ok: res.ok, rolled: res.ok ? rolled : null };
+    return Object.assign({}, res, { rolled: res.ok ? rolled : null });
   }
 
   /* ---- edit ------------------------------------------------------------ */
 
+  /* An edit re-spells the line — and when the list changed, moves it under
+     its new heading. */
   async function update(item, fields) {
     return withLines(item, (lines, i) => {
       const cur = T.parseLine(lines[i]) || item;
-      lines[i] = T.serializeLine(Object.assign({}, cur, fields));
+      const line = T.serializeLine(Object.assign({}, cur, fields));
+      const from = groupAt(lines, i);
+      const to = fields && fields.group !== undefined ? String(fields.group || '').trim() : from;
+      if (to === from) { lines[i] = line; return {}; }
+      lines.splice(i, 1);
+      placeLine(lines, to, line);
+      return { moved: true };
     });
   }
 
@@ -259,15 +372,14 @@ function makeStore(plugin) {
   /* One pass over the note for lines written in the old order. Writes only
      when a line actually moved. */
   async function liftTimes() {
-    const { text } = await readText();
-    if (!text) return { changed: 0 };
-    const lines = text.split('\n');
     let changed = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const next = liftTime(lines[i]);
-      if (next !== lines[i]) { lines[i] = next; changed++; }
-    }
-    if (changed) await writeText(lines.join('\n'));
+    await edit(lines => {
+      for (let i = 0; i < lines.length; i++) {
+        const next = liftTime(lines[i]);
+        if (next !== lines[i]) { lines[i] = next; changed++; }
+      }
+      return changed ? {} : { ok: false };
+    });
     return { changed };
   }
 
@@ -284,13 +396,31 @@ function makeStore(plugin) {
     const p = icsPath();
     await ensureFolder(p);
     stamp();
-    await v.adapter.write(p, text);
+    const f = v.getFileByPath(p);
+    if (f) await v.modify(f, text);
+    else await v.create(p, text);
     return { path: p, count: countEvents(items) };
   }
 
   const isOurs = p => typeof p === 'string' && (p === path() || p === icsPath());
 
-  return { path, icsPath, load, ensureFile, add, addList, toggle, update, snooze, setDue, remove, liftTimes, exportICS, isOurs };
+  /* One change at a time. Two quick ticks (or a tick from the board and one
+     from Vista) queue behind each other instead of racing. */
+  let chain = Promise.resolve();
+  const queued = fn => function () {
+    const args = arguments;
+    const run = chain.then(() => fn.apply(null, args));
+    chain = run.catch(() => {});
+    return run;
+  };
+
+  return {
+    path, icsPath, load, isOurs,
+    ensureFile: queued(ensureFile), add: queued(add), addList: queued(addList),
+    toggle: queued(toggle), update: queued(update), snooze: queued(snooze),
+    setDue: queued(setDue), remove: queued(remove), liftTimes: queued(liftTimes),
+    exportICS: queued(exportICS),
+  };
 }
 
-module.exports = { makeStore, flipBox, dropToken, setDateToken, liftTime };
+module.exports = { makeStore, flipBox, dropToken, setDateToken, liftTime, splitLines };

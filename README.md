@@ -1,4 +1,4 @@
-# Nudge
+# Nudge Reminders
 
 A glass board for the things you must not forget, inside Obsidian.
 
@@ -49,7 +49,7 @@ Obsidian Tasks' emoji vocabulary, used as-is:
 | `📅 2026-09-20` | due |
 | `⏰ 09:00` | a clock time (Nudge's one addition; Tasks reads it as description text, so Nudge always writes it before the Tasks fields — Tasks reads fields from the end of the line and stops at the first thing that isn't one) |
 | `🔺 ⏫ 🔼 🔽 ⏬` | highest, high, medium, low, lowest |
-| `🔁 every month` | repeat — `every day / week / month / year`, `every 3 days`, `every weekday`, `every monday`, any of them `when done` |
+| `🔁 every month` | repeat — `every day / week / month / year`, `every 3 days`, `every weekday`, `every monday`, `every week on Monday, Thursday`, `every month on the 1st` / `on the last` / `on the second Tuesday`, any of them `when done`. A repeat Nudge can't read is left open when you tick it, never silently ended |
 | `✅ 2026-09-21` | ticked on |
 | `➕ 🛫 ⏳ 🆔 ⛔` | read, kept and written back untouched |
 

@@ -68,4 +68,17 @@ assert.strictEqual(p('Plan the day').title, 'Plan the day');
 assert.strictEqual(p('Read about the Monday Club').title, 'Read about the Monday Club', 'a capitalised weekday inside a name is not a date');
 assert.strictEqual(p('').title, '');
 assert.strictEqual(p('   ').title, '');
+/* ---- words that start like months are not months (audit, 27 Sep 2026) ---- */
+const TD = '2026-09-27';
+for (const text of ['Buy 3 decks of cards', 'Buy 2 mayonnaise', 'Get 2 novels from library', 'Buy 12 marbles', 'Buy 6 octopus toys', 'Order 4 junctions']) {
+  const q = Q.parseQuick(text, TD);
+  assert.strictEqual(q.due, '', `no date in "${text}"`);
+  assert.strictEqual(q.title, text, `and every word kept in "${text}"`);
+}
+assert.deepStrictEqual([Q.parseQuick('Sale 10 aug 2028', TD).due, Q.parseQuick('Sale 10 aug 2028', TD).title], ['2028-08-10', 'Sale'], 'a year is read, not left in the title');
+assert.strictEqual(Q.parseQuick('Pay on 3 September', TD).due, '2027-09-03');
+assert.strictEqual(Q.parseQuick('Pay 15th of October', TD).due, '2026-10-15');
+assert.strictEqual(Q.parseQuick('Meet 29 feb', TD).due, '2028-02-29', '29 Feb waits for a leap year');
+assert.deepStrictEqual([Q.parseQuick('Meet 31 apr', TD).due, Q.parseQuick('Meet 31 apr', TD).title], ['', 'Meet 31 apr'], 'no such date: nothing eaten');
+assert.deepStrictEqual(Q.parseQuick('Fix issue #12 today', TD).tags, [], 'an all-digit #12 is not a tag');
 console.log('quickparse OK');

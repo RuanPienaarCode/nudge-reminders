@@ -10,11 +10,13 @@ const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/* A real calendar date — 2027-02-29 and 2026-04-31 are not. */
 function isISO(s) {
   const m = ISO_RE.exec(String(s || ''));
   if (!m) return false;
-  const mo = +m[2], d = +m[3];
-  return mo >= 1 && mo <= 12 && d >= 1 && d <= 31;
+  const y = +m[1], mo = +m[2], d = +m[3];
+  if (mo < 1 || mo > 12 || d < 1) return false;
+  return d <= new Date(Date.UTC(y, mo, 0)).getUTCDate();
 }
 
 const isTime = s => TIME_RE.test(String(s || ''));

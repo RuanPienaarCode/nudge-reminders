@@ -231,5 +231,120 @@ function host(text) {
   assert.strictEqual(h.plugin._lastWrite, 0, 'and writes nothing');
   assert.deepStrictEqual(await host(null).store.liftTimes(), { changed: 0 }, 'no note, no harm');
 
+  /* ---- audit, 27 Sep 2026 ------------------------------------------ */
+
+  /* A vault that behaves like the real one: reads and writes take a turn of
+     the event loop, and process() is atomic. */
+  function realHost(text) {
+    const files = new Map([['Reminders.md', text]]);
+    const tick = () => new Promise(res => setTimeout(res, 1));
+    const plugin = {
+      settings: { file: 'Reminders.md', icsFile: 'Reminders.ics' }, _lastWrite: 0,
+      app: { vault: {
+        getFileByPath: p => (files.has(p) ? { path: p } : null),
+        getFolderByPath: () => ({ path: '', children: [] }),
+        read: async f => { await tick(); return files.get(f.path); },
+        modify: async (f, t) => { await tick(); files.set(f.path, t); },
+        process: async (f, fn) => { await tick(); const t = fn(files.get(f.path)); files.set(f.path, t); return t; },
+        create: async (p, t) => { files.set(p, t); return { path: p }; },
+        createFolder: async () => {},
+      } },
+    };
+    return { plugin, files, store: makeStore(plugin) };
+  }
+
+  /* two quick ticks both land */
+  h = realHost('- [ ] A 📅 2026-10-01\n- [ ] B 📅 2026-10-01\n');
+  ({ items } = await h.store.load());
+  await Promise.all([h.store.toggle(items[0], '2026-09-27'), h.store.toggle(items[1], '2026-09-27')]);
+  assert.strictEqual(h.files.get('Reminders.md'), '- [x] A 📅 2026-10-01 ✅ 2026-09-27\n- [x] B 📅 2026-10-01 ✅ 2026-09-27\n', 'no tick is lost');
+
+  /* an identical line in another list is not the one removed */
+  h = host('## Home\n- [ ] Take pills 📅 2026-10-01\n## Work\n- [ ] Take pills 📅 2026-10-01\n');
+  ({ items } = await h.store.load());
+  const work = items.find(i => i.group === 'Work');
+  h.files.set('Reminders.md', 'A line typed above\n' + h.files.get('Reminders.md'));
+  assert.strictEqual((await h.store.remove(work)).ok, true);
+  assert.strictEqual(h.files.get('Reminders.md'), 'A line typed above\n## Home\n- [ ] Take pills 📅 2026-10-01\n## Work\n', 'Home keeps its pills');
+
+  /* a date edited by hand while the board was open is still found — once */
+  h = host('## Home\n- [ ] Call mum 📅 2026-10-01\n');
+  ({ items } = await h.store.load());
+  h.files.set('Reminders.md', '## Home\n- [ ] Call mum 📅 2026-10-03\n');
+  assert.strictEqual((await h.store.toggle(items[0], '2026-09-27')).ok, true);
+  assert.ok(h.files.get('Reminders.md').includes('- [x] Call mum 📅 2026-10-03 ✅ 2026-09-27'));
+
+  /* a repeat we cannot read is refused, and the note is left alone */
+  const odd = '- [ ] Water ferns 📅 2026-10-01 🔁 every blue moon\n';
+  h = host(odd);
+  ({ items } = await h.store.load());
+  r = await h.store.toggle(items[0], '2026-09-27');
+  assert.deepStrictEqual([r.ok, r.reason, r.repeat], [false, 'repeat', 'every blue moon']);
+  assert.strictEqual(h.files.get('Reminders.md'), odd, 'the series is not ended');
+
+  /* a Tasks-style repeat rolls */
+  h = host('- [ ] Bins 📅 2026-10-01 🔁 every week on Monday\n');
+  ({ items } = await h.store.load());
+  r = await h.store.toggle(items[0], '2026-09-27');
+  assert.strictEqual(r.rolled.due, '2026-10-05');
+
+  /* a repeat with no due date counts from today */
+  h = host('- [ ] Stretch 🔁 every day\n');
+  ({ items } = await h.store.load());
+  r = await h.store.toggle(items[0], '2026-09-27');
+  assert.strictEqual(h.files.get('Reminders.md'), '- [ ] Stretch 🔁 every day 📅 2026-09-28\n- [x] Stretch 🔁 every day ✅ 2026-09-27\n');
+
+  /* a roll moves 🛫 and ⏳ with the due date */
+  h = host('- [ ] Bill 🛫 2026-09-25 ⏳ 2026-09-28 📅 2026-10-01 🔁 every month\n');
+  ({ items } = await h.store.load());
+  await h.store.toggle(items[0], '2026-09-27');
+  assert.strictEqual(h.files.get('Reminders.md').split('\n')[0], '- [ ] Bill 🛫 2026-10-26 ⏳ 2026-10-29 📅 2026-11-01 🔁 every month');
+
+  /* ^block-ids stay at the end; on a roll the link follows the open one */
+  h = host('- [ ] Pay rent 📅 2026-10-01 ^rent1\n');
+  ({ items } = await h.store.load());
+  await h.store.toggle(items[0], '2026-09-27');
+  assert.strictEqual(h.files.get('Reminders.md'), '- [x] Pay rent 📅 2026-10-01 ✅ 2026-09-27 ^rent1\n');
+  h = host('- [ ] Pay rent 📅 2026-10-01 🔁 every month ^rent1\n');
+  ({ items } = await h.store.load());
+  await h.store.toggle(items[0], '2026-09-27');
+  assert.strictEqual(h.files.get('Reminders.md'), '- [ ] Pay rent 📅 2026-11-01 🔁 every month ^rent1\n- [x] Pay rent 📅 2026-10-01 🔁 every month ✅ 2026-09-27\n');
+
+  /* snooze changes the date the board reads — the last one, outside code */
+  h = host('- [ ] Check `📅 2020-01-01` format 📅 2026-10-01\n');
+  ({ items } = await h.store.load());
+  await h.store.snooze(items[0], 1, '2026-09-27');
+  assert.strictEqual(h.files.get('Reminders.md'), '- [ ] Check `📅 2020-01-01` format 📅 2026-09-28\n');
+
+  /* a CRLF note is read and stays CRLF */
+  h = host('## Home\r\n- [ ] Crlf 📅 2026-10-01\r\n');
+  ({ items } = await h.store.load());
+  assert.strictEqual(items.length, 1);
+  await h.store.toggle(items[0], '2026-09-27');
+  assert.strictEqual(h.files.get('Reminders.md'), '## Home\r\n- [x] Crlf 📅 2026-10-01 ✅ 2026-09-27\r\n');
+
+  /* changing the list in the editor moves the line */
+  h = host(START);
+  ({ items } = await h.store.load());
+  const plants = items.find(i => i.title === 'Water the plants');
+  assert.strictEqual((await h.store.update(plants, { group: 'Admin' })).moved, true);
+  ({ items } = await h.store.load());
+  assert.strictEqual(items.find(i => i.title === 'Water the plants').group, 'Admin');
+
+  /* ⏰ inside a wikilink or a code span is not ours to move */
+  assert.strictEqual(liftTime('- [ ] See [[Plan 📅 draft]] notes 📅 2026-10-01 ⏰ 09:00'),
+    '- [ ] See [[Plan 📅 draft]] notes ⏰ 09:00 📅 2026-10-01');
+  assert.strictEqual(liftTime('- [ ] Use `⏫` icon 📅 2026-10-01 ⏰ 09:00'), '- [ ] Use `⏫` icon ⏰ 09:00 📅 2026-10-01');
+  assert.strictEqual(liftTime('- [ ] a 📅 2026-10-01 ⏰ 09:00\r'), '- [ ] a ⏰ 09:00 📅 2026-10-01\r');
+  assert.strictEqual(liftTime('- [ ] Call 📅 2026-10-01 ⏰ 09:00 🔁 every week'), '- [ ] Call ⏰ 09:00 📅 2026-10-01 🔁 every week', 'a ⏰ in the middle of the run');
+
+  /* the calendar file goes through the vault, not the adapter */
+  h = host(START);
+  let adapterUsed = false;
+  h.plugin.app.vault.adapter.write = async () => { adapterUsed = true; };
+  await h.store.exportICS('2026-09-27T08:00:00Z');
+  assert.ok(h.files.get('Reminders.ics').startsWith('BEGIN:VCALENDAR'));
+  assert.strictEqual(adapterUsed, false);
+
   console.log('store OK');
 })().catch(e => { console.error(e); process.exit(1); });

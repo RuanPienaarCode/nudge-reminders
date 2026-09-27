@@ -46,6 +46,7 @@ const app = {
     read: async f => files.get(f.path),
     cachedRead: async f => files.get(f.path),
     modify: async (f, t) => { files.set(f.path, t); log(t); },
+    process: async (f, fn) => { const t = fn(files.get(f.path)); files.set(f.path, t); log(t); return t; },
     create: async (p, t) => { files.set(p, t); log(t); return fileOf(p); },
     createFolder: async () => {},
     adapter: { write: async (p, t) => { files.set(p, t); console.log('[ics]', p, '\n' + t); }, exists: async p => files.has(p) },

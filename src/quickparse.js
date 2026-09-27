@@ -12,6 +12,10 @@ const D = require('./dates');
 const R = require('./recur');
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+/* A month is its full name or its short form and nothing else — "3 decks",
+   "2 mayonnaise" and "12 marbles" are things to buy, not dates. */
+const MONTH_WORD = '(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?';
+const YEAR_TAIL = '(?:,?\\s+(\\d{4}))?';
 const DAYS = { sunday: 0, sun: 0, monday: 1, mon: 1, tuesday: 2, tue: 2, wednesday: 3, wed: 3, thursday: 4, thu: 4, friday: 5, fri: 5, saturday: 6, sat: 6 };
 const WORD_PRIORITY = { highest: 'highest', urgent: 'highest', high: 'high', med: 'medium', medium: 'medium', low: 'low', lowest: 'lowest' };
 
@@ -33,12 +37,18 @@ function nextDow(today, target) {
   return D.addDays(today, ((target - D.dow(today)) + 7) % 7);
 }
 
-/* A day and a month with no year: this year if it is still ahead, else next. */
-function dateFromDayMonth(day, monthIdx, today) {
-  const y = +String(today).slice(0, 4);
+/* A day and a month: in the year given, or else this year if it is still
+   ahead, else the next year that has it (29 Feb waits for a leap year).
+   '' when there is no such date at all — 31 April is not a guess. */
+function dateFromDayMonth(day, monthIdx, today, year) {
   const mk = yy => `${yy}-${String(monthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  const thisYear = mk(y);
-  return D.diffDays(today, thisYear) >= 0 ? thisYear : mk(y + 1);
+  if (year) return D.isISO(mk(year)) ? mk(year) : '';
+  const y = +String(today).slice(0, 4);
+  for (let yy = y; yy <= y + 8; yy++) {
+    const d = mk(yy);
+    if (D.isISO(d) && D.diffDays(today, d) >= 0) return d;
+  }
+  return '';
 }
 
 function parseQuick(text, today) {
@@ -59,7 +69,7 @@ function parseQuick(text, today) {
   };
 
   /* tags first — they can sit anywhere */
-  s = s.replace(/(^|\s)(#[^\s#]+)/g, (all, pre, tag) => { out.tags.push(tag); return pre; });
+  s = s.replace(/(^|\s)(#[^\s#]*[^\s#\d][^\s#]*)/g, (all, pre, tag) => { out.tags.push(tag); return pre; });
 
   /* repeats before dates, or "every monday" loses its weekday to the date
      matcher and comes back as a one-off */
@@ -94,13 +104,17 @@ function parseQuick(text, today) {
     out.due = iso;
   });
   if (!out.due) {
-    cut(new RegExp(LEAD + '(?:' + PREP + ')?(\\d{1,2})\\s+(' + MONTHS.join('|') + ')[a-z]*\\b', 'i'), (all, pre, d, mon) => {
-      out.due = dateFromDayMonth(+d, MONTHS.indexOf(mon.toLowerCase().slice(0, 3)), day);
+    cut(new RegExp(LEAD + '(?:' + PREP + ')?(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?' + MONTH_WORD + YEAR_TAIL + '(?=\\s|$)', 'i'), (all, pre, d, mon, yr) => {
+      const iso = dateFromDayMonth(+d, MONTHS.indexOf(mon.toLowerCase().slice(0, 3)), day, yr ? +yr : 0);
+      if (!iso) return false;
+      out.due = iso;
     });
   }
   if (!out.due) {
-    cut(new RegExp(LEAD + '(?:' + PREP + ')?(' + MONTHS.join('|') + ')[a-z]*\\s+(\\d{1,2})\\b', 'i'), (all, pre, mon, d) => {
-      out.due = dateFromDayMonth(+d, MONTHS.indexOf(mon.toLowerCase().slice(0, 3)), day);
+    cut(new RegExp(LEAD + '(?:' + PREP + ')?' + MONTH_WORD + '\\s+(\\d{1,2})(?:st|nd|rd|th)?' + YEAR_TAIL + '(?=\\s|$)', 'i'), (all, pre, mon, d, yr) => {
+      const iso = dateFromDayMonth(+d, MONTHS.indexOf(mon.toLowerCase().slice(0, 3)), day, yr ? +yr : 0);
+      if (!iso) return false;
+      out.due = iso;
     });
   }
   if (!out.due) {

@@ -42,4 +42,29 @@ assert.strictEqual(R.describe('every 2 weeks'), 'Every 2 weeks');
 assert.strictEqual(R.describe('every monday'), 'Every Monday');
 assert.strictEqual(R.describe(''), '');
 assert.deepStrictEqual(R.PRESETS.map(p => p.rule).slice(0, 3), ['every day', 'every week', 'every month']);
+/* ---- the audit's cases (27 Sep 2026) ---- */
+const nd = (rule, due, today) => R.nextDue(rule, due, today || due, today || due);
+/* a late tick walks forward from the ORIGINAL date, so the 31st stays the 31st */
+assert.strictEqual(nd('every month', '2026-01-31', '2026-03-15'), '2026-03-31');
+/* N applies to weekdays and named days too */
+assert.strictEqual(nd('every 2 weekdays', '2026-09-28'), '2026-09-30');
+assert.strictEqual(nd('every 2 mondays', '2026-09-28'), '2026-10-12');
+/* the forms Tasks writes — they used to end the series on tick */
+assert.strictEqual(nd('every week on Monday', '2026-10-01'), '2026-10-05');
+assert.strictEqual(nd('every week on Monday, Thursday', '2026-10-01'), '2026-10-05');
+assert.strictEqual(nd('every week on Monday, Thursday', '2026-10-05'), '2026-10-08');
+assert.strictEqual(nd('every 2 weeks on Friday', '2026-10-02'), '2026-10-16');
+assert.strictEqual(nd('every month on the 1st', '2026-10-01'), '2026-11-01');
+assert.strictEqual(nd('every month on the last', '2026-02-10'), '2026-02-28');
+assert.strictEqual(nd('every month on the 31st', '2026-02-28'), '2026-03-31', 'the rule, not the date, holds the day');
+assert.strictEqual(nd('every month on the 31st', '2026-03-31'), '2026-04-30', 'clamped in a short month');
+assert.strictEqual(nd('every month on the last Friday', '2026-09-25'), '2026-10-30');
+assert.strictEqual(nd('every month on the second Tuesday', '2026-10-13'), '2026-11-10');
+assert.strictEqual(nd('every 3 months on the 15th', '2026-10-15'), '2027-01-15');
+assert.strictEqual(nd('every month on the fifth Friday', '2026-10-30'), '2027-01-29', 'a month without one is skipped');
+assert.strictEqual(R.nextDue('every week on Monday when done', '2026-09-01', '2026-09-27', '2026-09-27'), '2026-09-28');
+assert.strictEqual(nd('every week on Blursday', '2026-10-01'), '', 'still nothing invented');
+assert.strictEqual(R.describe('every week on monday, thursday'), 'Every week on Mon, Thu');
+assert.strictEqual(R.describe('every month on the last friday'), 'Every month on the last Friday');
+assert.strictEqual(R.describe('every 2 weekdays'), 'Every 2 weekdays');
 console.log('recur OK');

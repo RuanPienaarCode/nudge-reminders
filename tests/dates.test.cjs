@@ -47,4 +47,9 @@ assert.strictEqual(D.isTime('09:00'), true);
 assert.strictEqual(D.isTime('9:00'), false);
 assert.strictEqual(D.isTime('24:00'), false);
 assert.strictEqual(D.isTime('23:59'), true);
+/* A real calendar date, not just the right shape. */
+assert.strictEqual(D.isISO('2027-02-29'), false, 'no 29 Feb outside a leap year');
+assert.strictEqual(D.isISO('2028-02-29'), true);
+assert.strictEqual(D.isISO('2026-04-31'), false);
+assert.strictEqual(D.isISO('2026-12-31'), true);
 console.log('dates OK');

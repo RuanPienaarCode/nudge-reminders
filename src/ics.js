@@ -17,11 +17,13 @@ const PRIORITY_NUM = { highest: 1, high: 2, medium: 5, normal: 5, low: 7, lowest
 
 /* Stable per reminder so a re-import UPDATES the event it made last time
    instead of leaving a duplicate behind. Deliberately independent of the due
-   date: moving a date must move the event, not clone it. FNV-1a, because
-   node:crypto does not exist on mobile. */
-function uidFor(item) {
+   date: moving a date must move the event, not clone it. Two reminders with
+   the same title in the same list ("Take pills" at 08:00 and at 20:00) are
+   told apart by their place among their twins — `nth` counts from 1. FNV-1a,
+   because node:crypto does not exist on mobile. */
+function uidFor(item, nth) {
   let h = 0x811c9dc5;
-  const s = `${item.group || ''}|${String(item.title || '').toLowerCase()}`;
+  const s = `${item.group || ''}|${String(item.title || '').toLowerCase()}${nth > 1 ? '|' + nth : ''}`;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
     h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
@@ -30,7 +32,7 @@ function uidFor(item) {
 }
 
 const esc = s => String(s === undefined || s === null ? '' : s)
-  .replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+  .replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
 
 /* Fold to 75 OCTETS (not characters — an emoji in a title is four of them),
    never mid-codepoint, continuations introduced by a single space. */
@@ -73,10 +75,14 @@ const dateVal = iso => String(iso).replace(/-/g, '');
    is, which is what a reminder means. */
 const timeVal = (iso, hm) => `${dateVal(iso)}T${String(hm).replace(':', '')}00`;
 
-function addMinutes(hm, mins) {
+/* A time plus some minutes, carried into the next day when it wraps — a
+   23:50 reminder ends at 00:05 the day AFTER, not before it started. */
+function addMinutes(iso, hm, mins) {
   const [h, m] = String(hm).split(':').map(Number);
-  const t = ((h * 60 + m + mins) % 1440 + 1440) % 1440;
-  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+  const total = h * 60 + m + mins;
+  const days = Math.floor(total / 1440);
+  const t = ((total % 1440) + 1440) % 1440;
+  return { date: D.addDays(iso, days), time: `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}` };
 }
 
 /* An all-day event starts at midnight; nobody wants to be woken then. The
@@ -90,26 +96,32 @@ function allDayTrigger(hm) {
 function buildICS(items, opts) {
   const o = opts || {};
   const name = o.name || 'Nudge';
-  const alarmMinutes = o.alarmMinutes === undefined ? 10 : Number(o.alarmMinutes);
+  const alarmMinutes = Number.isFinite(Number(o.alarmMinutes)) && o.alarmMinutes !== '' && o.alarmMinutes !== null && o.alarmMinutes !== undefined ? Number(o.alarmMinutes) : 10;
   const allDayAlarmTime = o.allDayAlarmTime || '09:00';
   const stamp = stampOf(o.now);
 
   const lines = [
     'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Ruan Pienaar//Nudge for Obsidian//EN',
     'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', `X-WR-CALNAME:${esc(name)}`,
-    'X-WR-TIMEZONE:UTC', `X-WR-CALDESC:${esc('Reminders exported from ' + name)}`,
+    /* No X-WR-TIMEZONE: times here are floating, and naming a zone (UTC was
+       here) invites Google Calendar to shift 09:00 by the phone's offset. */
+    `X-WR-CALDESC:${esc('Reminders exported from ' + name)}`,
   ];
 
+  const twins = {};
   for (const it of items || []) {
     if (!it || it.done || !D.isISO(it.due)) continue;
     const timed = D.isTime(it.time);
+    const key = `${it.group || ''}|${String(it.title || '').toLowerCase()}`;
+    twins[key] = (twins[key] || 0) + 1;
     lines.push('BEGIN:VEVENT');
-    lines.push(`UID:${uidFor(it)}`);
+    lines.push(`UID:${uidFor(it, twins[key])}`);
     lines.push(`DTSTAMP:${stamp}`);
     lines.push(`SUMMARY:${esc(it.title)}`);
     if (timed) {
       lines.push(`DTSTART:${timeVal(it.due, it.time)}`);
-      lines.push(`DTEND:${timeVal(it.due, addMinutes(it.time, 15))}`);
+      const end = addMinutes(it.due, it.time, 15);
+      lines.push(`DTEND:${timeVal(end.date, end.time)}`);
     } else {
       lines.push(`DTSTART;VALUE=DATE:${dateVal(it.due)}`);
       lines.push(`DTEND;VALUE=DATE:${dateVal(D.addDays(it.due, 1))}`);

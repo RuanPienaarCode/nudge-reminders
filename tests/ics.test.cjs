@@ -57,4 +57,18 @@ const long = I.buildICS([{ title: 'x'.repeat(200), due: '2026-09-20', done: fals
 for (const l of long.split('\r\n')) assert.ok(Buffer.byteLength(l, 'utf8') <= 75, `folded: ${l.length}`);
 assert.ok(long.includes('\r\n x'), 'a continuation line begins with a space');
 assert.ok(I.buildICS([], { name: 'N', now: '2026-09-13T08:00:00Z' }).includes('END:VCALENDAR'), 'an empty list is still a valid calendar');
+/* ---- audit, 27 Sep 2026 ---- */
+assert.strictEqual(I.esc('a;b'), 'a\\;b', 'a semicolon is escaped');
+const late = I.buildICS([{ title: 'Late', due: '2026-10-01', time: '23:50', tags: [] }], { now: '2026-09-27T08:00:00Z' });
+assert.ok(late.includes('DTSTART:20261001T235000') && late.includes('DTEND:20261002T000500'), 'an event that crosses midnight ends the next day');
+assert.ok(!late.includes('X-WR-TIMEZONE'), 'floating times name no zone');
+const pills = I.buildICS([
+  { title: 'Take pills', group: 'Health', due: '2026-10-01', time: '08:00', tags: [] },
+  { title: 'Take pills', group: 'Health', due: '2026-10-01', time: '20:00', tags: [] },
+], { now: '2026-09-27T08:00:00Z' });
+const uids = pills.split('\r\n').filter(l => l.startsWith('UID:'));
+assert.strictEqual(uids.length, 2);
+assert.notStrictEqual(uids[0], uids[1], 'twins get their own events');
+assert.strictEqual(uids[0], 'UID:' + I.uidFor({ title: 'Take pills', group: 'Health' }), 'and the first keeps the UID it always had');
+assert.ok(I.buildICS([{ title: 'x', due: '2026-10-01', time: '09:00', tags: [] }], { alarmMinutes: 'abc' }).includes('TRIGGER:-PT10M'), 'a bad alarm setting falls back to 10 minutes');
 console.log('ics OK');

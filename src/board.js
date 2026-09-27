@@ -407,10 +407,17 @@ function mountBoard(view) {
   async function tick(it, row) {
     row.classList.add(it.done ? 'is-unticking' : 'is-ticking');
     const r = await store.toggle(it, D.todayISO());
-    if (!r.ok) { new Notice('Nudge: that line is no longer in the note.'); await reload(); return; }
+    if (!r.ok) { new Notice(tickRefused(r)); await reload(); return; }
     if (r.rolled) new Notice(`Nudge: next one ${D.relative(r.rolled.due, state.today).toLowerCase()}.`);
     await reload();
     await maybeExport();
+  }
+
+  /* Why a tick didn't happen. A repeat we can't read is left open on
+     purpose — ticking it would end the series without a word. */
+  function tickRefused(r) {
+    if (r && r.reason === 'repeat') return `Nudge: can't work out when "🔁 ${r.repeat}" comes round next, so it was left open. Edit the repeat, or tick it off in the note.`;
+    return 'Nudge: that line is no longer in the note.';
   }
 
   function snoozeMenu(it, e) {
@@ -430,7 +437,9 @@ function mountBoard(view) {
     const m = new Menu();
     m.addItem(i => i.setTitle('Edit').setIcon('pencil').onClick(() => edit(it)));
     m.addItem(i => i.setTitle(it.done ? 'Mark as not done' : 'Mark as done').setIcon('check').onClick(async () => {
-      await store.toggle(it, D.todayISO()); await reload(); await maybeExport();
+      const r = await store.toggle(it, D.todayISO());
+      if (!r.ok) new Notice(tickRefused(r));
+      await reload(); await maybeExport();
     }));
     m.addItem(i => i.setTitle('Open in the note').setIcon('pencil').onClick(() => openNote(it)));
     m.addItem(i => i.setTitle('Delete').setIcon('trash-2').onClick(async () => {

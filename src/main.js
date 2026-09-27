@@ -85,10 +85,14 @@ class NudgePlugin extends Plugin {
     });
 
     /* Someone edited the note by hand — including on another device, via
-       sync. Our own writes are stamped so they don't bounce back. */
-    this.registerEvent(this.app.vault.on('modify', file => {
-      if (!file || !this.store.isOurs(file.path)) return;
-      if (Date.now() - this._lastWrite < 1200) return;
+       sync. Our own write is recognised by its CONTENT, not by a time window:
+       an edit that arrives by sync a moment after we saved must still show. */
+    this.registerEvent(this.app.vault.on('modify', async file => {
+      if (!file || file.path !== this.store.path()) return;
+      if (this._lastText !== undefined) {
+        try { if (await this.app.vault.cachedRead(file) === this._lastText) return; }
+        catch (e) { /* unreadable for a moment: refresh anyway */ }
+      }
       this.refreshViews();
       this.updateBadge();
     }));
