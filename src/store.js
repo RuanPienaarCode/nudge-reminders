@@ -48,21 +48,24 @@ const FAMILY = {
 };
 const markerRe = emoji => FAMILY[emoji] || `${reEsc(emoji)}\\uFE0F?`;
 
+/* Both date writers finish with liftTime: a date appended to a line ending
+   in ⏰ would otherwise put ⏰ inside the Tasks field run, and a line already
+   in the old order gets repaired while we are touching it anyway. */
 function dropToken(raw, emoji) {
-  return surgery(raw, s => s.replace(new RegExp(`\\s*${markerRe(emoji)}\\s*${DATE}`, 'g'), '').replace(/[ \t]+$/, ''));
+  return liftTime(surgery(raw, s => s.replace(new RegExp(`\\s*${markerRe(emoji)}\\s*${DATE}`, 'g'), '').replace(/[ \t]+$/, '')));
 }
 
 /* Change a date token in place. It is the LAST one on the line that we
    change, because that is the one the parser reads — rewriting an earlier
    stray would make snooze look like it did nothing. */
 function setDateToken(raw, emoji, value) {
-  return surgery(raw, s => {
+  return liftTime(surgery(raw, s => {
     const re = new RegExp(`(${markerRe(emoji)}\\s*)${DATE}`, 'g');
     let last = null;
     for (let m = re.exec(s); m; m = re.exec(s)) last = m;
     if (last) return s.slice(0, last.index) + last[1] + value + s.slice(last.index + last[0].length);
     return `${s.replace(/[ \t]+$/, '')} ${emoji} ${value}`;
-  });
+  }));
 }
 
 const TIME_TOKEN = /⏰\uFE0F?[ \t]*(\d{1,2}:\d{2})/g;

@@ -338,6 +338,66 @@ function host(text) {
   assert.strictEqual(liftTime('- [ ] a 📅 2026-10-01 ⏰ 09:00\r'), '- [ ] a ⏰ 09:00 📅 2026-10-01\r');
   assert.strictEqual(liftTime('- [ ] Call 📅 2026-10-01 ⏰ 09:00 🔁 every week'), '- [ ] Call ⏰ 09:00 📅 2026-10-01 🔁 every week', 'a ⏰ in the middle of the run');
 
+  /* ---- ⏰ stays out of the field run on every date write --------------- */
+  /* Found reviewing Fortnight, which moves reminders through store.setDue:
+     a 📅 added to a line that had none was appended AFTER ⏰, putting ⏰ back
+     inside the run and hiding every field before it from Tasks. This reader
+     is written independently of src/: it peels fields off the END of the
+     line the way Tasks does and stops at the first thing that isn't one. */
+  const FIELD_TAIL = /\s+((?:📅|⏳|🛫|✅|➕)\s*\d{4}-\d{2}-\d{2}|🔁\s*[a-zA-Z0-9, !]+|🔺|⏫|🔼|🔽|⏬|#[^\s#]+)$/;
+  function tasksRead(line) {
+    let s = line.replace(/\s+\^[A-Za-z0-9-]+$/, '');
+    const fields = [];
+    for (let m = FIELD_TAIL.exec(s); m; m = FIELD_TAIL.exec(s)) {
+      fields.unshift(m[1].replace(/\s+/g, ' '));
+      s = s.slice(0, m.index);
+    }
+    return fields;
+  }
+  assert.deepStrictEqual(tasksRead('- [ ] Pills ⏳ 2026-10-01 ⏰ 08:00 📅 2026-10-07'), ['📅 2026-10-07'],
+    'the reader sees the bug: ⏰ in the run hides ⏳');
+
+  for (const [name, line, act, want, fields] of [
+    ['setDue adds 📅 to a line with ⏳ and ⏰',
+      '- [ ] Pills ⏳ 2026-10-01 ⏰ 08:00', (st, it) => st.setDue(it, '2026-10-07'),
+      '- [ ] Pills ⏰ 08:00 ⏳ 2026-10-01 📅 2026-10-07', ['⏳ 2026-10-01', '📅 2026-10-07']],
+    ['setDue moves 📅 on a line already in order',
+      '- [ ] Pills ⏰ 08:00 📅 2026-10-01 ⏳ 2026-09-30', (st, it) => st.setDue(it, '2026-10-07'),
+      '- [ ] Pills ⏰ 08:00 📅 2026-10-07 ⏳ 2026-09-30', ['📅 2026-10-07', '⏳ 2026-09-30']],
+    ['setDue moves 📅 on an old-order line and repairs it',
+      '- [ ] Pills 📅 2026-10-01 ⏰ 08:00 ⏳ 2026-09-30', (st, it) => st.setDue(it, '2026-10-07'),
+      '- [ ] Pills ⏰ 08:00 📅 2026-10-07 ⏳ 2026-09-30', ['📅 2026-10-07', '⏳ 2026-09-30']],
+    ['setDue clears 📅 and keeps ⏳',
+      '- [ ] Pills ⏰ 08:00 ⏳ 2026-10-01 📅 2026-10-07', (st, it) => st.setDue(it, ''),
+      '- [ ] Pills ⏰ 08:00 ⏳ 2026-10-01', ['⏳ 2026-10-01']],
+    ['setDue clears 📅 on a line the old bug wrote',
+      '- [ ] Pills ⏳ 2026-10-01 ⏰ 08:00 📅 2026-10-07', (st, it) => st.setDue(it, null),
+      '- [ ] Pills ⏰ 08:00 ⏳ 2026-10-01', ['⏳ 2026-10-01']],
+    ['snooze adds 📅 the same way',
+      '- [ ] Pills #meds ⏫ ⏰ 08:00 ^pills', (st, it) => st.snooze(it, 1, '2026-09-27'),
+      /* #meds stays in the description, where Tasks still reads a tag */
+      '- [ ] Pills #meds ⏰ 08:00 ⏫ 📅 2026-09-28 ^pills', ['⏫', '📅 2026-09-28']],
+  ]) {
+    h = host(`## Health\n${line}\n`);
+    ({ items } = await h.store.load());
+    await act(h.store, items[0]);
+    const out = h.files.get('Reminders.md').split('\n')[1];
+    assert.strictEqual(out, want, name);
+    assert.deepStrictEqual(tasksRead(out), fields, `${name}: Tasks reads every field`);
+    ({ items } = await h.store.load());
+    assert.strictEqual(items[0].time, '08:00', `${name}: the board still reads the time`);
+  }
+
+  /* ticking a repeat that had no 📅: both the tick and the next one */
+  h = host('## Health\n- [ ] Pills ⏳ 2026-09-27 ⏰ 08:00 🔁 every day\n');
+  ({ items } = await h.store.load());
+  await h.store.toggle(items[0], '2026-09-27');
+  const [fresh, ticked] = h.files.get('Reminders.md').split('\n').slice(1, 3);
+  assert.strictEqual(fresh, '- [ ] Pills ⏰ 08:00 ⏳ 2026-09-28 🔁 every day 📅 2026-09-28');
+  assert.deepStrictEqual(tasksRead(fresh), ['⏳ 2026-09-28', '🔁 every day', '📅 2026-09-28']);
+  assert.strictEqual(ticked, '- [x] Pills ⏰ 08:00 ⏳ 2026-09-27 🔁 every day ✅ 2026-09-27');
+  assert.deepStrictEqual(tasksRead(ticked), ['⏳ 2026-09-27', '🔁 every day', '✅ 2026-09-27']);
+
   /* the calendar file goes through the vault, not the adapter */
   h = host(START);
   let adapterUsed = false;
