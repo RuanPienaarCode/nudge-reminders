@@ -40,6 +40,31 @@ function setDateToken(raw, emoji, value) {
   return `${String(raw).replace(/[ \t]+$/, '')} ${emoji} ${value}`;
 }
 
+/* Every Tasks field marker — everything the line vocabulary knows except ⏰,
+   which is ours and which Tasks reads as description text. */
+const FIELD_RE = /(🔺|⏫|🔼|🔽|⏬|📅|📆|🗓️|🗓|✅|➕|🛫|⏳|⌛|🔁|🆔|⛔)/;
+const TIME_TOKEN = /⏰️?[ \t]*(\d{1,2}:\d{2})/;
+
+/* Tasks reads fields from the END of the line and stops at the first thing
+   that isn't one, so a ⏰ written after 📅 (Nudge's first line order) hides the
+   due date from Tasks. Move just the ⏰ token to before the first Tasks field.
+   Surgery, not a re-spelling: nothing else on the line moves, so a trailing
+   ^block-id stays where Obsidian needs it. A line that is fine comes back
+   identical. */
+function liftTime(raw) {
+  const s = String(raw);
+  const m = T.LINE_RE.exec(s);
+  if (!m) return s;
+  const body = m[4];
+  const head = s.slice(0, s.length - body.length);
+  const tm = TIME_TOKEN.exec(body);
+  const fm = FIELD_RE.exec(body);
+  if (!tm || !fm || tm.index < fm.index) return s;
+  const rest = `${body.slice(0, tm.index).replace(/[ \t]+$/, '')} ${body.slice(tm.index + tm[0].length).replace(/^[ \t]+/, '')}`.replace(/[ \t]+$/, '');
+  const before = rest.slice(0, fm.index).replace(/[ \t]+$/, '');
+  return `${head}${before ? before + ' ' : ''}⏰ ${tm[1]} ${rest.slice(fm.index)}`;
+}
+
 /* ---- the store -------------------------------------------------------- */
 
 function makeStore(plugin) {
@@ -231,6 +256,21 @@ function makeStore(plugin) {
     return withLines(item, (lines, i) => { lines.splice(i, 1); });
   }
 
+  /* One pass over the note for lines written in the old order. Writes only
+     when a line actually moved. */
+  async function liftTimes() {
+    const { text } = await readText();
+    if (!text) return { changed: 0 };
+    const lines = text.split('\n');
+    let changed = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const next = liftTime(lines[i]);
+      if (next !== lines[i]) { lines[i] = next; changed++; }
+    }
+    if (changed) await writeText(lines.join('\n'));
+    return { changed };
+  }
+
   /* ---- the calendar file ----------------------------------------------- */
 
   async function exportICS(now) {
@@ -250,7 +290,7 @@ function makeStore(plugin) {
 
   const isOurs = p => typeof p === 'string' && (p === path() || p === icsPath());
 
-  return { path, icsPath, load, ensureFile, add, addList, toggle, update, snooze, setDue, remove, exportICS, isOurs };
+  return { path, icsPath, load, ensureFile, add, addList, toggle, update, snooze, setDue, remove, liftTimes, exportICS, isOurs };
 }
 
-module.exports = { makeStore, flipBox, dropToken, setDateToken };
+module.exports = { makeStore, flipBox, dropToken, setDateToken, liftTime };

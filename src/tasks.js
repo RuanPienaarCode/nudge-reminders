@@ -4,11 +4,14 @@
    Every reminder is one Obsidian Tasks checkbox line in a plain note, so the
    Tasks plugin, a grep, a phone and a human all read the same file:
 
-     - [ ] Sign papers for mom's medical aid 📅 2026-09-20 ⏰ 09:00 ⏫ 🔁 every month #family
+     - [ ] Sign papers for mom's medical aid ⏰ 09:00 #family 📅 2026-09-20 ⏫ 🔁 every month
 
    Tasks' emoji vocabulary is used as-is. ⏰ is the one addition (Tasks has no
-   clock time); to Tasks it is simply part of the description, which is why it
-   is safe.
+   clock time); to Tasks it is simply part of the description — but ONLY while
+   it sits before the fields. Tasks reads fields from the end of the line and
+   stops at the first non-field, so ⏰ must never land in that trailing run.
+   Old-order lines (📅 … ⏰ …) still parse — the parser is order-agnostic —
+   and the next save rewrites them into this order.
 
    Parsing is LOSSLESS by design: tokens this plugin never shows — 🛫 🆔 ⛔ —
    are still read, held, and written back out. A reminder edited here must
@@ -110,9 +113,12 @@ function serializeLine(t) {
   const bits = [`${indent}${marker} [${box}]`];
   const title = squash(t.title);
   if (title) bits.push(title);
+  /* ⏰ goes BEFORE everything Tasks reads. Tasks peels fields off the END of
+     the line and stops at the first thing that isn't one — a ⏰ after 📅
+     hides the due date (and every field before it) from Tasks. */
+  if (t.time) bits.push('⏰ ' + t.time);
   for (const tag of t.tags || []) bits.push(tag);
   if (t.due) bits.push('📅 ' + t.due);
-  if (t.time) bits.push('⏰ ' + t.time);
   const pe = EMOJI_FOR[t.priority || 'normal'];
   if (pe) bits.push(pe);
   if (t.repeat) bits.push('🔁 ' + t.repeat);

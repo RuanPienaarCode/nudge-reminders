@@ -58,6 +58,16 @@ class NudgePlugin extends Plugin {
       },
     });
     this.addCommand({
+      id: 'lift-times', name: 'Fix timed reminders for the Tasks plugin',
+      callback: async () => {
+        const { changed } = await this.store.liftTimes();
+        if (!changed) { new Notice('Nudge: every timed reminder already reads right in Tasks.'); return; }
+        new Notice(`Nudge: moved the time on ${changed} reminder${changed === 1 ? '' : 's'} so Tasks can see ${changed === 1 ? 'its' : 'their'} dates.`);
+        this.refreshViews();
+        this.updateBadge();
+      },
+    });
+    this.addCommand({
       id: 'copy-deep-link', name: 'Copy the deep link (for a Shortcuts automation)',
       callback: async () => {
         const link = `obsidian://${PROTOCOL}`;

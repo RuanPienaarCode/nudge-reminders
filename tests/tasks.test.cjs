@@ -70,7 +70,78 @@ assert.strictEqual(
   '- [ ] Tagged #family #health 📅 2026-09-20');
 assert.strictEqual(
   T.serializeLine({ title: 'Timed', due: '2026-09-20', time: '09:00' }),
-  '- [ ] Timed 📅 2026-09-20 ⏰ 09:00');
+  '- [ ] Timed ⏰ 09:00 📅 2026-09-20');
+
+/* ---- Tasks reads fields from the END ------------------------------- */
+/* Obsidian Tasks (8.4.0) anchors every field regex to the end of the line and
+   walks backwards, peeling tags and fields off until something is neither —
+   then stops. ⏰ is not a Tasks field, so anything written AFTER it is
+   invisible to Tasks. This is that reader, cut down to what we write. */
+const TASKS_FIELDS = [
+  ['priority', /\s*(🔺|⏫|🔼|🔽|⏬)️?$/],
+  ['due', /(?:📅|📆|🗓)️? *(\d{4}-\d{2}-\d{2})$/],
+  ['done', /✅️? *(\d{4}-\d{2}-\d{2})$/],
+  ['created', /➕️? *(\d{4}-\d{2}-\d{2})$/],
+  ['start', /🛫️? *(\d{4}-\d{2}-\d{2})$/],
+  ['scheduled', /(?:⏳|⌛)️? *(\d{4}-\d{2}-\d{2})$/],
+  ['recurrence', /🔁️? *([a-zA-Z0-9, !]+)$/],
+  ['id', /🆔️? *([a-zA-Z0-9-_]+)$/],
+  ['dependsOn', /⛔️? *([a-zA-Z0-9-_]+( *, *[a-zA-Z0-9-_]+ *)*)$/],
+];
+function tasksRead(line) {
+  let body = T.LINE_RE.exec(line)[4].trim();
+  const got = {};
+  for (let moved = true; moved;) {
+    moved = false;
+    const tag = /(^|\s)#[^\s#]+$/.exec(body);
+    if (tag) { body = body.slice(0, tag.index).trim(); moved = true; continue; }
+    for (const [name, re] of TASKS_FIELDS) {
+      const m = re.exec(body);
+      if (!m) continue;
+      got[name] = (m[1] || '').trim();
+      body = body.slice(0, m.index).trim();
+      moved = true;
+      break;
+    }
+  }
+  got.description = body;
+  return got;
+}
+/* The reader reproduces the bug on the old spelling… */
+assert.strictEqual(tasksRead('- [ ] Phone the dentist #health 📅 2026-10-01 ⏰ 09:30').due, undefined);
+/* …and a timed reminder as we now write it keeps every Tasks field in the
+   trailing run. */
+const timed = T.serializeLine({
+  title: 'Phone the dentist', tags: ['#health'], due: '2026-10-01', time: '09:30',
+  priority: 'high', repeat: 'every month', start: '2026-09-28', scheduled: '2026-09-30',
+  created: '2026-09-27', id: 'abc123', blockedBy: 'xyz9',
+});
+assert.strictEqual(timed,
+  '- [ ] Phone the dentist ⏰ 09:30 #health 📅 2026-10-01 ⏫ 🔁 every month 🛫 2026-09-28 ⏳ 2026-09-30 ➕ 2026-09-27 🆔 abc123 ⛔ xyz9');
+const seen = tasksRead(timed);
+assert.strictEqual(seen.due, '2026-10-01', 'Tasks finds the due date on a timed reminder');
+assert.strictEqual(seen.priority, '⏫');
+assert.strictEqual(seen.recurrence, 'every month');
+assert.strictEqual(seen.start, '2026-09-28');
+assert.strictEqual(seen.scheduled, '2026-09-30');
+assert.strictEqual(seen.created, '2026-09-27');
+assert.strictEqual(seen.id, 'abc123');
+assert.strictEqual(seen.dependsOn, 'xyz9');
+assert.strictEqual(seen.description, 'Phone the dentist ⏰ 09:30');
+const ticked = T.serializeLine({ title: 'Timed', done: true, doneDate: '2026-10-02', due: '2026-10-01', time: '09:30' });
+assert.strictEqual(ticked, '- [x] Timed ⏰ 09:30 📅 2026-10-01 ✅ 2026-10-02');
+assert.strictEqual(tasksRead(ticked).due, '2026-10-01');
+assert.strictEqual(tasksRead(ticked).done, '2026-10-02');
+
+/* A line written in the old order still parses, and the next save moves ⏰
+   out of the trailing run. */
+const legacy = T.parseLine('- [ ] Phone the dentist #health 📅 2026-10-01 ⏰ 09:30 ⏫');
+assert.strictEqual(legacy.title, 'Phone the dentist');
+assert.strictEqual(legacy.due, '2026-10-01');
+assert.strictEqual(legacy.time, '09:30');
+assert.strictEqual(legacy.priority, 'high');
+assert.deepStrictEqual(legacy.tags, ['#health']);
+assert.strictEqual(T.serializeLine(legacy), '- [ ] Phone the dentist ⏰ 09:30 #health 📅 2026-10-01 ⏫');
 
 /* ---- round trip ----------------------------------------------------- */
 const LINES = [

@@ -8,7 +8,7 @@ edit them by hand on any device.
 
 ```markdown
 ## Family
-- [ ] Sign papers for mom's medical aid 📅 2026-09-20 ⏰ 09:00 ⏫ 🔁 every month #family
+- [ ] Sign papers for mom's medical aid ⏰ 09:00 #family 📅 2026-09-20 ⏫ 🔁 every month
 ```
 
 ## What it does
@@ -47,7 +47,7 @@ Obsidian Tasks' emoji vocabulary, used as-is:
 | Token | Means |
 |---|---|
 | `📅 2026-09-20` | due |
-| `⏰ 09:00` | a clock time (Nudge's one addition; Tasks reads it as description text) |
+| `⏰ 09:00` | a clock time (Nudge's one addition; Tasks reads it as description text, so Nudge always writes it before the Tasks fields — Tasks reads fields from the end of the line and stops at the first thing that isn't one) |
 | `🔺 ⏫ 🔼 🔽 ⏬` | highest, high, medium, low, lowest |
 | `🔁 every month` | repeat — `every day / week / month / year`, `every 3 days`, `every weekday`, `every monday`, any of them `when done` |
 | `✅ 2026-09-21` | ticked on |
@@ -55,6 +55,11 @@ Obsidian Tasks' emoji vocabulary, used as-is:
 
 Anything Nudge doesn't drive the UI from still round-trips, so a reminder edited
 here never comes back smaller than it went in.
+
+Earlier builds wrote `⏰` after `📅`, which hides the due date from Tasks. Run
+**Nudge: Fix timed reminders for the Tasks plugin** once to move the time in
+every such line; nothing else on the line changes. Editing a reminder fixes it
+too.
 
 ## Building it
 

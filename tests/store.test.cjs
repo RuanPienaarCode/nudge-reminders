@@ -4,7 +4,7 @@
    exactly where it was. */
 require('./_stub.cjs');
 const assert = require('node:assert');
-const { makeStore } = require('../src/store');
+const { makeStore, liftTime } = require('../src/store');
 
 const START = [
   '# Reminders',
@@ -181,6 +181,55 @@ function host(text) {
   await h.store.add({ title: 'Check the tyres', group: 'Car stuff' });
   loaded = await h.store.load();
   assert.strictEqual(loaded.items.find(i => i.title === 'Check the tyres').group, 'Car stuff', 'a reminder lands in the new list');
+
+  /* ---- lifting ⏰ out of the Tasks field run ---- */
+  /* Tasks reads fields from the END of the line and stops at the first thing
+     that isn't one, so a ⏰ after 📅 hides the due date. The fix moves only
+     the ⏰ token to just before the first Tasks field — surgery, not a
+     re-spelling: the rest of the line keeps its own order and spacing. */
+  assert.strictEqual(liftTime('- [ ] Phone the dentist #health 📅 2026-10-01 ⏰ 09:30'),
+    '- [ ] Phone the dentist #health ⏰ 09:30 📅 2026-10-01');
+  assert.strictEqual(liftTime('  * [x] Timed 📅 2026-10-01 ⏰ 09:30 ✅ 2026-10-02'),
+    '  * [x] Timed ⏰ 09:30 📅 2026-10-01 ✅ 2026-10-02', 'done lines too, indent and marker kept');
+  assert.strictEqual(liftTime('- [ ] Call ⏫ 📅 2026-10-01 ⏰ 9:30 ^abc123'),
+    '- [ ] Call ⏰ 9:30 ⏫ 📅 2026-10-01 ^abc123', 'a block id stays at the end, where Obsidian needs it');
+  assert.strictEqual(liftTime('- [ ] 📅 2026-10-01 ⏰ 09:30'), '- [ ] ⏰ 09:30 📅 2026-10-01', 'no title');
+  for (const fine of [
+    '- [ ] Timed ⏰ 09:00 📅 2026-09-20',
+    '- [ ] Only a time ⏰ 09:00',
+    '- [ ] No time 📅 2026-09-20',
+    'Prose that mentions 📅 2026-09-20 ⏰ 09:00 is not a task',
+  ]) assert.strictEqual(liftTime(fine), fine, `left alone: ${fine}`);
+
+  const TIMED = [
+    '# Reminders',
+    'Prose that mentions 📅 2026-09-20 ⏰ 09:00 is not a task',
+    '## Health',
+    '- [ ] Phone the dentist #health 📅 2026-10-01 ⏰ 09:30',
+    '- [ ] Timed ⏰ 09:00 📅 2026-09-20',
+    '- [x] Pills 📅 2026-09-25  ⏰ 08:00 🔁 every day ✅ 2026-09-25',
+    '- [ ] Someone else’s task 🔼 📅 2026-10-03',
+    ''].join('\n');
+  h = host(TIMED);
+  r = await h.store.liftTimes();
+  assert.strictEqual(r.changed, 2);
+  assert.strictEqual(h.files.get('Reminders.md'), [
+    '# Reminders',
+    'Prose that mentions 📅 2026-09-20 ⏰ 09:00 is not a task',
+    '## Health',
+    '- [ ] Phone the dentist #health ⏰ 09:30 📅 2026-10-01',
+    '- [ ] Timed ⏰ 09:00 📅 2026-09-20',
+    '- [x] Pills ⏰ 08:00 📅 2026-09-25 🔁 every day ✅ 2026-09-25',
+    '- [ ] Someone else’s task 🔼 📅 2026-10-03',
+    ''].join('\n'));
+  loaded = await h.store.load();
+  const dentist = loaded.items.find(i => i.title === 'Phone the dentist');
+  assert.deepStrictEqual([dentist.due, dentist.time, dentist.tags], ['2026-10-01', '09:30', ['#health']]);
+  h.plugin._lastWrite = 0;
+  r = await h.store.liftTimes();
+  assert.strictEqual(r.changed, 0, 'a second run finds nothing');
+  assert.strictEqual(h.plugin._lastWrite, 0, 'and writes nothing');
+  assert.deepStrictEqual(await host(null).store.liftTimes(), { changed: 0 }, 'no note, no harm');
 
   console.log('store OK');
 })().catch(e => { console.error(e); process.exit(1); });

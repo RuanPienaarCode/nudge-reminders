@@ -20,7 +20,7 @@ const NOTE = q.get('empty') === '1' ? '# Reminders\n\n' : [
   '',
   '## Family',
   `- [ ] Sign papers for mom's medical aid 📅 ${d(-3)} ⏫ #family`,
-  `- [ ] Phone the medical aid about the referral 📅 ${T} ⏰ 09:30 #family`,
+  `- [ ] Phone the medical aid about the referral ⏰ 09:30 #family 📅 ${T}`,
   `- [ ] Collect mom's scans from the radiologist 📅 ${T} 🔺 #family #health`,
   `- [x] Fetch the prescription 📅 ${d(-4)} ✅ ${d(-4)} #family`,
   '',
@@ -31,7 +31,7 @@ const NOTE = q.get('empty') === '1' ? '# Reminders\n\n' : [
   '- [ ] One day, sort out the garage',
   '',
   '## Work',
-  `- [ ] Send the quarterly invoice 📅 ${d(2)} ⏰ 16:00 🔼 #work`,
+  `- [ ] Send the quarterly invoice ⏰ 16:00 #work 📅 ${d(2)} 🔼`,
   `- [ ] Water the office plants 📅 ${d(-1)} 🔁 every week #work`,
   '',
 ].join('\n');
