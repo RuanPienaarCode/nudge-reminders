@@ -25,12 +25,16 @@ class NudgePlugin extends Plugin {
     /* Said once is said — but only for this run. A restart is a good enough
        reason to be told again about something still overdue. */
     this._fired = new Set();
-    this.store = makeStore(this);
+    this.store = this.seam(makeStore(this));
 
     this.registerView(VIEW_TYPE, leaf => new NudgeView(leaf, this));
-    this.ribbonEl = this.addRibbonIcon('bell', 'Open Nudge', () => this.activateView());
+    /* Obsidian prefixes a command with the plugin's name, so neither the
+       command nor the tooltip repeats it. */
+    this.ribbonEl = this.addRibbonIcon('bell', 'Open reminders board', () => this.activateView());
+    /* The count badge is absolutely positioned against this node. */
+    if (this.ribbonEl && this.ribbonEl.classList) this.ribbonEl.classList.add('nd-ribbon');
 
-    this.addCommand({ id: 'open', name: 'Open Nudge', callback: () => this.activateView() });
+    this.addCommand({ id: 'open', name: 'Open reminders board', callback: () => this.activateView() });
     this.addCommand({
       id: 'add', name: 'Add a reminder',
       callback: async () => {
@@ -63,8 +67,6 @@ class NudgePlugin extends Plugin {
         const { changed } = await this.store.liftTimes();
         if (!changed) { new Notice('Nudge: every timed reminder already reads right in Tasks.'); return; }
         new Notice(`Nudge: moved the time on ${changed} reminder${changed === 1 ? '' : 's'} so Tasks can see ${changed === 1 ? 'its' : 'their'} dates.`);
-        this.refreshViews();
-        this.updateBadge();
       },
     });
     this.addCommand({
@@ -107,10 +109,35 @@ class NudgePlugin extends Plugin {
 
     /* One timer for the whole plugin. */
     this.registerInterval(window.setInterval(() => this.tick(), 60000));
-    window.setTimeout(() => this.tick(), 4000);
+    this._startTimer = window.setTimeout(() => { this._startTimer = null; this.tick(); }, 4000);
   }
 
-  onunload() {}
+  onunload() {
+    if (this._startTimer !== null && this._startTimer !== undefined) window.clearTimeout(this._startTimer);
+    this._startTimer = null;
+  }
+
+  /* plugin.store is the seam other plugins (Vista, Fortnight) write through,
+     and the commands here use it too. The store records every write's text
+     as ours, so the modify handler above cannot tell it from the board's own
+     — which means a write made here never refreshed an open board or the
+     ribbon badge. So a write that landed refreshes both, here, once. The
+     board's own store is a separate instance and refreshes itself. */
+  seam(store) {
+    const writes = ['add', 'addList', 'toggle', 'update', 'snooze', 'setDue', 'remove', 'liftTimes'];
+    const wrapped = Object.assign({}, store);
+    for (const name of writes) {
+      const inner = store[name];
+      wrapped[name] = async (...args) => {
+        const r = await inner(...args);
+        /* { ok: false } and { changed: 0 } wrote nothing. */
+        const wrote = !(r && (r.ok === false || r.changed === 0));
+        if (wrote) { this.refreshViews(); this.updateBadge(); }
+        return r;
+      };
+    }
+    return wrapped;
+  }
 
   async tick() {
     let items = [];
@@ -155,8 +182,6 @@ class NudgePlugin extends Plugin {
       onSave: async fields => {
         await this.store.add(fields);
         new Notice(`Nudge: "${fields.title}" added.`);
-        this.refreshViews();
-        this.updateBadge();
         if (this.settings.autoExport) await this.exportICS();
       },
     });

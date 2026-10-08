@@ -7,9 +7,9 @@ const assert = require('node:assert');
 const T = require('../src/tasks');
 
 /* ---- parse ---------------------------------------------------------- */
-const a = T.parseLine("- [ ] Sign papers for mom's medical aid 📅 2026-09-20 ⏰ 09:00 ⏫ 🔁 every month #family");
+const a = T.parseLine("- [ ] Sign the school's permission slip 📅 2026-09-20 ⏰ 09:00 ⏫ 🔁 every month #family");
 assert.ok(a);
-assert.strictEqual(a.title, "Sign papers for mom's medical aid");
+assert.strictEqual(a.title, "Sign the school's permission slip");
 assert.strictEqual(a.due, '2026-09-20');
 assert.strictEqual(a.time, '09:00');
 assert.strictEqual(a.priority, 'high');
@@ -87,6 +87,7 @@ const TASKS_FIELDS = [
   ['recurrence', /🔁️? *([a-zA-Z0-9, !]+)$/],
   ['id', /🆔️? *([a-zA-Z0-9-_]+)$/],
   ['dependsOn', /⛔️? *([a-zA-Z0-9-_]+( *, *[a-zA-Z0-9-_]+ *)*)$/],
+  ['onCompletion', /🏁️? *([a-zA-Z]+)$/],
 ];
 function tasksRead(line) {
   let body = T.LINE_RE.exec(line)[4].trim();
@@ -145,7 +146,7 @@ assert.strictEqual(T.serializeLine(legacy), '- [ ] Phone the dentist ⏰ 09:30 #
 
 /* ---- round trip ----------------------------------------------------- */
 const LINES = [
-  "- [ ] Sign papers for mom's medical aid 📅 2026-09-20 ⏰ 09:00 ⏫ 🔁 every month #family",
+  "- [ ] Sign the school's permission slip 📅 2026-09-20 ⏰ 09:00 ⏫ 🔁 every month #family",
   '  * [x] Renew licence disc 📅 2026-09-01 ✅ 2026-09-02',
   '- [ ] Pay rates ➕ 2026-09-01 🛫 2026-09-05 ⏳ 2026-09-10 📅 2026-09-13 🆔 abc123',
   '- [ ] Bare',
@@ -170,8 +171,8 @@ const NOTE = [
   'Anything above a heading is left alone.',
   '',
   '## Family',
-  "- [ ] Sign papers for mom's medical aid 📅 2026-09-20 ⏫",
-  '- [x] Fetch the prescription 📅 2026-09-10 ✅ 2026-09-10',
+  "- [ ] Sign the school's permission slip 📅 2026-09-20 ⏫",
+  '- [x] Buy light bulbs 📅 2026-09-10 ✅ 2026-09-10',
   '',
   '## Admin',
   '- [ ] Renew the licence disc 📅 2026-10-01',
@@ -215,4 +216,64 @@ assert.deepStrictEqual(T.listsOf('## A\r\n## B\r\n'), ['A', 'B']);
 /* where Tasks' trailing run starts */
 assert.strictEqual(T.trailingRunStart('Call #fam 📅 2026-10-01 ⏫'), 5);
 assert.strictEqual(T.trailingRunStart('Just words'), 10);
+/* ---- audit, 7 Oct 2026 ----------------------------------------------- */
+
+/* L5: a second copy of a single-value field is kept as text, marker and all.
+   The LAST copy is the field (it is the one Tasks reads, peeling from the
+   end); an explicit edit must never come back smaller than it went in. */
+p = T.parseLine('- [ ] Two priorities ⏫ 🔽 📅 2026-10-01');
+assert.deepStrictEqual([p.title, p.priority, p.due], ['Two priorities ⏫', 'low', '2026-10-01']);
+assert.strictEqual(round('- [ ] Two priorities ⏫ 🔽 📅 2026-10-01'), '- [ ] Two priorities ⏫ 📅 2026-10-01 🔽');
+assert.strictEqual(round(round('- [ ] Two priorities ⏫ 🔽 📅 2026-10-01')), '- [ ] Two priorities ⏫ 📅 2026-10-01 🔽', 'and a second save changes nothing');
+p = T.parseLine('- [ ] Two dues 📅 2026-10-01 📅 2026-10-05');
+assert.deepStrictEqual([p.title, p.due], ['Two dues 📅 2026-10-01', '2026-10-05']);
+assert.strictEqual(round('- [ ] Two dues 📅 2026-10-01 📅 2026-10-05'), '- [ ] Two dues 📅 2026-10-01 📅 2026-10-05');
+p = T.parseLine('- [ ] Done date on open ✅ 2026-10-01 📅 2026-10-05');
+assert.deepStrictEqual([p.title, p.doneDate, p.due], ['Done date on open ✅ 2026-10-01', '', '2026-10-05'], 'a ✅ on an open line is text');
+assert.strictEqual(round('- [ ] Done date on open ✅ 2026-10-01 📅 2026-10-05'), '- [ ] Done date on open ✅ 2026-10-01 📅 2026-10-05');
+p = T.parseLine('- [x] Twice ✅ 2026-10-01 ✅ 2026-10-02');
+assert.deepStrictEqual([p.title, p.doneDate], ['Twice ✅ 2026-10-01', '2026-10-02']);
+p = T.parseLine('- [ ] Two repeats 🔁 every day 🔁 every week');
+assert.deepStrictEqual([p.title, p.repeat], ['Two repeats 🔁 every day', 'every week']);
+assert.strictEqual(round('- [ ] Two repeats 🔁 every day 🔁 every week'), '- [ ] Two repeats 🔁 every day 🔁 every week');
+/* %%comments%% and [text](links) are quoted text, like code spans */
+p = T.parseLine('- [ ] Note %%📅 2020-01-01%% 📅 2026-10-01');
+assert.deepStrictEqual([p.title, p.due], ['Note %%📅 2020-01-01%%', '2026-10-01'], 'a comment is text');
+p = T.parseLine('- [ ] Link [📅 cal](https://x.y/#top) 📅 2026-10-01');
+assert.deepStrictEqual([p.title, p.tags, p.due], ['Link [📅 cal](https://x.y/#top)', [], '2026-10-01'], 'so is a markdown link, and its #anchor is not a tag');
+assert.strictEqual(round('- [ ] Link [📅 cal](https://x.y/#top) 📅 2026-10-01'), '- [ ] Link [📅 cal](https://x.y/#top) 📅 2026-10-01');
+
+/* L6: ⛔ takes Tasks' whole list, spaces after the commas included */
+p = T.parseLine('- [ ] Ship it ⛔ abc, def 📅 2026-10-01');
+assert.deepStrictEqual([p.title, p.blockedBy], ['Ship it', 'abc, def']);
+assert.strictEqual(round('- [ ] Ship it ⛔ abc, def 📅 2026-10-01'), '- [ ] Ship it 📅 2026-10-01 ⛔ abc, def');
+assert.strictEqual(T.parseLine('- [ ] Ship it ⛔ abc then more').title, 'Ship it then more', 'only the list is the field');
+
+/* L7: Tasks' On Completion field is its own lossless field, not part of 🔁 */
+p = T.parseLine('- [ ] Pills 🔁 every day 🏁 delete 📅 2026-10-01');
+assert.deepStrictEqual([p.title, p.repeat, p.onCompletion, p.due], ['Pills', 'every day', 'delete', '2026-10-01']);
+assert.strictEqual(round('- [ ] Pills 🔁 every day 🏁 delete 📅 2026-10-01'), '- [ ] Pills 📅 2026-10-01 🔁 every day 🏁 delete');
+assert.strictEqual(tasksRead(round('- [ ] Pills 🔁 every day 🏁 keep 📅 2026-10-01')).onCompletion, 'keep', 'Tasks reads it');
+assert.strictEqual(tasksRead(round('- [ ] Pills 🔁 every day 🏁 keep 📅 2026-10-01')).recurrence, 'every day');
+p = T.parseLine('- [ ] Odd 🏁 maybe');
+assert.deepStrictEqual([p.title, p.onCompletion], ['Odd 🏁 maybe', ''], 'a value Tasks would not accept stays text');
+assert.strictEqual(T.trailingRunStart('Call 📅 2026-10-01 🔁 every day 🏁 delete'), 5, '🏁 is part of the trailing run');
+
+/* L8: nothing a caller passes can put a second line into the note */
+assert.strictEqual(T.serializeLine({ title: 'Buy milk', tags: ['family'] }), '- [ ] Buy milk #family', 'a tag without # gets one');
+assert.strictEqual(T.serializeLine({ title: 'Buy milk', tags: 'family' }), '- [ ] Buy milk #family', 'a lone string is one tag');
+assert.strictEqual(T.serializeLine({ title: 'Buy milk', tags: ['my tag', '#ok', ''] }), '- [ ] Buy milk #my-tag #ok');
+assert.strictEqual(T.serializeLine({ title: 'x', repeat: 'every day\n- [x] fake' }), '- [ ] x 🔁 every day - [x] fake');
+assert.strictEqual(T.serializeLine({ title: 'a\r\nb', time: '09:00\n', due: '2026-10-01\n- [ ] z' }), '- [ ] a b ⏰ 09:00 📅 2026-10-01 - [ ] z');
+assert.ok(!/[\r\n]/.test(T.serializeLine({ title: 't', id: 'a\nb', blockedBy: 'c\nd', start: 'e\nf', indent: '\n- [ ] ', marker: '\n' })));
+
+/* L10: fenced code is not the note */
+const FENCED = '## Home\n- [ ] Real 📅 2026-10-01\n\n```md\n# a comment\n- [ ] example in a code block 📅 2026-01-01\n```\n- [ ] After the fence\n';
+assert.deepStrictEqual(T.parseNote(FENCED).map(i => `${i.group}:${i.title}:${i.line}`), ['Home:Real:1', 'Home:After the fence:7'], 'a # inside a fence does not reset the list');
+assert.deepStrictEqual(T.parseNote('## A\n~~~\n- [ ] tilde\n~~~\n- [ ] kept\n').map(i => i.title), ['kept']);
+assert.deepStrictEqual(T.parseNote('- [ ] a\n````\n```\n- [ ] still code\n````\n- [ ] b\n').map(i => i.title), ['a', 'b'], 'a longer fence is closed only by a fence as long');
+assert.deepStrictEqual(T.parseNote('- [ ] a\n```\n- [ ] b\n').map(i => i.title), ['a'], 'an unclosed fence runs to the end');
+assert.deepStrictEqual(T.parseNote('- [ ] a\n```js x`y\n- [ ] b\n').map(i => i.title), ['a', 'b'], 'a backtick fence cannot carry backticks in its info string');
+assert.deepStrictEqual(T.listsOf('## A\n```\n## Not a list\n```\n## B\n'), ['A', 'B']);
+assert.deepStrictEqual(T.fencedLines(['a', '```', 'b', '```', 'c']), [false, true, true, true, false]);
 console.log('tasks OK');

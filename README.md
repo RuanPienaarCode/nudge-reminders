@@ -7,15 +7,15 @@ plugin database: the Tasks plugin reads them, a search finds them, and you can
 edit them by hand on any device.
 
 ```markdown
-## Family
-- [ ] Sign papers for mom's medical aid ⏰ 09:00 #family 📅 2026-09-20 ⏫ 🔁 every month
+## Home
+- [ ] Renew the car licence ⏰ 09:00 #admin 📅 2026-09-20 ⏫ 🔁 every year
 ```
 
 ## What it does
 
 - **Buckets, not a pile.** Overdue, Today, Tomorrow, This week, Later, Someday —
   each answers a different question, so they never share a list.
-- **One typed line.** `Sign papers for mom tomorrow at 9am !high #family` becomes
+- **One typed line.** `Renew the car licence tomorrow at 9am !high #admin` becomes
   a dated, prioritised, tagged reminder. It shows you what it understood before
   you commit, and it never eats a word it didn't understand.
 - **Repeats that behave.** `🔁 every month` rolls the next one out when you tick
@@ -37,8 +37,12 @@ Two mechanisms, because one of them cannot reach a locked phone:
 2. **A calendar file** — `Reminders.ics`, written into your vault. Open it on
    your phone and Apple Calendar adds the reminders with their alarms, which
    fire whether or not Obsidian is running. **This is one way**: ticking a
-   reminder off in Calendar does not tick it off in the vault. Re-exporting
-   updates the events it made before rather than duplicating them.
+   reminder off in Calendar does not tick it off in the vault. Each reminder
+   keeps the same event id from one export to the next, so a calendar that
+   honours updates replaces its old event rather than adding a second. A
+   repeating reminder goes out as its next occurrence only, and a reminder
+   with a time but no date is not exported, so re-export after ticking or
+   rescheduling.
 
 ## The line format
 
@@ -57,9 +61,22 @@ Anything Nudge doesn't drive the UI from still round-trips, so a reminder edited
 here never comes back smaller than it went in.
 
 Earlier builds wrote `⏰` after `📅`, which hides the due date from Tasks. Run
-**Nudge: Fix timed reminders for the Tasks plugin** once to move the time in
+**Nudge Reminders: Fix timed reminders for the Tasks plugin** once to move the time in
 every such line; nothing else on the line changes. Editing a reminder fixes it
 too.
+
+## What it reads and writes
+
+- **Your reminders note** (`Reminders.md` by default, set in the plugin's
+  settings). Opening the board creates it if it doesn't exist. Nudge edits
+  only the reminder lines it is asked to change; prose, headings and other
+  plugins' tasks are left byte for byte as they were.
+- **The calendar file** (`Reminders.ics` by default), only when you export it
+  or turn on automatic export.
+
+Nothing else in the vault is touched. Nudge makes **no network requests** and
+collects no telemetry; the only clipboard use is the *Copy the deep link*
+command, when you run it.
 
 ## Building it
 

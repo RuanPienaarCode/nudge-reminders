@@ -88,7 +88,7 @@ function addMinutes(iso, hm, mins) {
 /* An all-day event starts at midnight; nobody wants to be woken then. The
    trigger is an offset from the start to the hour the user chose. */
 function allDayTrigger(hm) {
-  const [h, m] = String(D.isTime(hm) ? hm : '09:00').split(':').map(Number);
+  const [h, m] = (D.parseClock(hm) || '09:00').split(':').map(Number);
   if (!h && !m) return 'PT0M';
   return `PT${h ? h + 'H' : ''}${m ? m + 'M' : ''}`;
 }
@@ -108,12 +108,16 @@ function buildICS(items, opts) {
     `X-WR-CALDESC:${esc('Reminders exported from ' + name)}`,
   ];
 
+  /* Twins are counted BEFORE ticked or undated items are skipped. The UID
+     must not depend on what is open: when the 08:00 "Take pills" is ticked,
+     the 20:00 one stays number 2 instead of inheriting number 1's event. */
   const twins = {};
   for (const it of items || []) {
-    if (!it || it.done || !D.isISO(it.due)) continue;
-    const timed = D.isTime(it.time);
+    if (!it) continue;
     const key = `${it.group || ''}|${String(it.title || '').toLowerCase()}`;
     twins[key] = (twins[key] || 0) + 1;
+    if (it.done || !D.isISO(it.due)) continue;
+    const timed = D.isTime(it.time);
     lines.push('BEGIN:VEVENT');
     lines.push(`UID:${uidFor(it, twins[key])}`);
     lines.push(`DTSTAMP:${stamp}`);

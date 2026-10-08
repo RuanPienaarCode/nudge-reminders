@@ -4,7 +4,7 @@
    exactly where it was. */
 require('./_stub.cjs');
 const assert = require('node:assert');
-const { makeStore, liftTime } = require('../src/store');
+const { makeStore, liftTime, splitLines } = require('../src/store');
 
 const START = [
   '# Reminders',
@@ -12,7 +12,7 @@ const START = [
   'Things I must not forget.',
   '',
   '## Family',
-  "- [ ] Sign papers for mom's medical aid 📅 2026-09-10 ⏫ #family",
+  "- [ ] Sign the school's permission slip 📅 2026-09-10 ⏫ #family",
   '- [ ] Water the plants 📅 2026-09-13 🔁 every week',
   '',
   '## Admin',
@@ -50,11 +50,11 @@ function host(text) {
   assert.strictEqual(items[0].group, 'Family');
 
   /* ---- add: into an existing group, under its last task ---- */
-  await h.store.add({ title: 'Book the MRI', due: '2026-09-25', group: 'Family', priority: 'high' });
+  await h.store.add({ title: 'Book the plumber', due: '2026-09-25', group: 'Family', priority: 'high' });
   let text = h.files.get('Reminders.md');
-  assert.ok(text.includes('- [ ] Book the MRI 📅 2026-09-25 ⏫'));
-  assert.ok(text.indexOf('Book the MRI') > text.indexOf('Water the plants'), 'appended under its own heading');
-  assert.ok(text.indexOf('Book the MRI') < text.indexOf('## Admin'), 'and not into the next one');
+  assert.ok(text.includes('- [ ] Book the plumber 📅 2026-09-25 ⏫'));
+  assert.ok(text.indexOf('Book the plumber') > text.indexOf('Water the plants'), 'appended under its own heading');
+  assert.ok(text.indexOf('Book the plumber') < text.indexOf('## Admin'), 'and not into the next one');
   assert.ok(text.startsWith('# Reminders\n\nThings I must not forget.\n'), 'the prose above is untouched');
 
   /* ---- add: a group that does not exist yet gets its heading ---- */
@@ -98,7 +98,7 @@ function host(text) {
   assert.strictEqual(res.ok, true);
   assert.strictEqual(res.rolled, null);
   text = h.files.get('Reminders.md');
-  assert.ok(text.includes("- [x] Sign papers for mom's medical aid 📅 2026-09-10 ⏫ #family ✅ 2026-09-13"));
+  assert.ok(text.includes("- [x] Sign the school's permission slip 📅 2026-09-10 ⏫ #family ✅ 2026-09-13"));
   assert.strictEqual(text.split('\n').length, START.split('\n').length, 'no line added or lost');
 
   /* ---- toggle: a repeating reminder leaves the next one behind ---- */
@@ -124,7 +124,7 @@ function host(text) {
   h.files.set('Reminders.md', '- [ ] A new line at the top\n' + START);
   res = await h.store.toggle(items[0], '2026-09-13');
   assert.strictEqual(res.ok, true, 'found by its content, not its line number');
-  assert.ok(h.files.get('Reminders.md').includes("- [x] Sign papers for mom's medical aid"));
+  assert.ok(h.files.get('Reminders.md').includes("- [x] Sign the school's permission slip"));
 
   /* ---- the line is gone ---- */
   h = host(START);
@@ -137,9 +137,9 @@ function host(text) {
   /* ---- update ---- */
   h = host(START);
   ({ items } = await h.store.load());
-  await h.store.update(items[0], { due: '2026-09-30', priority: 'highest', title: 'Sign the medical aid papers' });
+  await h.store.update(items[0], { due: '2026-09-30', priority: 'highest', title: 'Sign the school permission slip' });
   text = h.files.get('Reminders.md');
-  assert.ok(text.includes('- [ ] Sign the medical aid papers #family 📅 2026-09-30 🔺'));
+  assert.ok(text.includes('- [ ] Sign the school permission slip #family 📅 2026-09-30 🔺'));
   assert.strictEqual(text.split('\n').length, START.split('\n').length);
 
   /* ---- snooze ---- */
@@ -405,6 +405,220 @@ function host(text) {
   await h.store.exportICS('2026-09-27T08:00:00Z');
   assert.ok(h.files.get('Reminders.ics').startsWith('BEGIN:VCALENDAR'));
   assert.strictEqual(adapterUsed, false);
+
+  /* ---- audit, 7 Oct 2026 ------------------------------------------- */
+  const noteOf = hh => hh.files.get('Reminders.md');
+
+  /* L1: a stale tick of a repeat must not tick the freshly rolled line.
+     Two quick ticks (a double click) hand the store the same old item; the
+     second one's exact line is gone, and the only open line with the same
+     words is the NEXT occurrence. */
+  h = host('## Home\n- [ ] Water plants 📅 2026-10-01 🔁 every week\n');
+  ({ items } = await h.store.load());
+  const twice = await Promise.all([h.store.toggle(items[0], '2026-10-01'), h.store.toggle(items[0], '2026-10-01')]);
+  assert.deepStrictEqual(twice.map(x => x.ok), [true, false], 'the second tick is refused');
+  assert.strictEqual(noteOf(h), '## Home\n- [ ] Water plants 📅 2026-10-08 🔁 every week\n- [x] Water plants 📅 2026-10-01 🔁 every week ✅ 2026-10-01\n', 'the next occurrence is still open');
+  /* the same for a repeat whose date was changed by hand while the board was open */
+  h = host('## Home\n- [ ] Call mum 📅 2026-10-01 🔁 every week\n');
+  ({ items } = await h.store.load());
+  h.files.set('Reminders.md', '## Home\n- [ ] Call mum 📅 2026-10-03 🔁 every week\n');
+  assert.strictEqual((await h.store.toggle(items[0], '2026-10-01')).ok, false, 'a repeat found only by its words is not ticked');
+  assert.strictEqual(noteOf(h), '## Home\n- [ ] Call mum 📅 2026-10-03 🔁 every week\n');
+
+  /* L3: a line found by its words must differ from the old one in dates only */
+  h = host('## Home\n- [ ] Take pills ⏰ 08:00 📅 2026-10-01\n- [ ] Take pills ⏰ 20:00 📅 2026-10-01\n');
+  ({ items } = await h.store.load());
+  h.files.set('Reminders.md', '## Home\n- [ ] Take pills ⏰ 20:00 📅 2026-10-01\n');
+  assert.strictEqual((await h.store.remove(items[0])).ok, false, 'the 08:00 reminder is gone; 20:00 is not it');
+  assert.strictEqual(noteOf(h), '## Home\n- [ ] Take pills ⏰ 20:00 📅 2026-10-01\n');
+  for (const [was, now] of [
+    ['- [ ] Call ⏫ 📅 2026-10-01', '- [ ] Call 🔽 📅 2026-10-01'],
+    ['- [ ] Call #home 📅 2026-10-01', '- [ ] Call #work 📅 2026-10-01'],
+    ['- [ ] Call 📅 2026-10-01', '- [ ] Call 📅 2026-10-01 🔁 every day'],
+  ]) {
+    h = host(`## Home\n${was}\n`);
+    ({ items } = await h.store.load());
+    h.files.set('Reminders.md', `## Home\n${now}\n`);
+    assert.strictEqual((await h.store.snooze(items[0], 1, '2026-10-07')).ok, false, `${was} is not ${now}`);
+    assert.strictEqual(noteOf(h), `## Home\n${now}\n`);
+  }
+  h = host('## Home\n- [ ] Call ⏫ 📅 2026-10-01 ⏳ 2026-09-30\n');
+  ({ items } = await h.store.load());
+  h.files.set('Reminders.md', '## Home\n- [ ] Call ⏫ 📅 2026-10-05\n');
+  assert.strictEqual((await h.store.snooze(items[0], 1, '2026-10-07')).ok, true, 'dates added, moved or removed by hand: still the same reminder');
+  assert.strictEqual(noteOf(h), '## Home\n- [ ] Call ⏫ 📅 2026-10-08\n');
+
+  /* L4: a "# Title" heading is not a list, whatever it is called */
+  h = host('# Home\n- [ ] x\n## Home\n- [ ] y\n');
+  await h.store.add({ title: 'z', group: 'Home' });
+  assert.strictEqual(noteOf(h), '# Home\n- [ ] x\n## Home\n- [ ] y\n- [ ] z\n', 'it lands under the ## list, not the title');
+  h = host(null);
+  await h.store.ensureFile();
+  await h.store.addList('Reminders');
+  await h.store.add({ title: 'Into my Reminders list', group: 'Reminders' });
+  ({ items } = await h.store.load());
+  assert.strictEqual(items.find(i => i.title === 'Into my Reminders list').group, 'Reminders', 'and reads back in the list it was added to');
+
+  /* L8: the seam takes input from other plugins (Vista, Fortnight) */
+  const PAY = '- [ ] Pay rent 📅 2026-10-01 ⏫\n';
+  for (const bad of ['2026-10-7', '2026-10-07T00:00', 'next week', '2026-02-30', 20261007, {}]) {
+    h = host(PAY);
+    ({ items } = await h.store.load());
+    assert.strictEqual((await h.store.setDue(items[0], bad)).ok, false, `setDue(${JSON.stringify(bad)}) is refused`);
+    assert.strictEqual(noteOf(h), PAY, 'and the 📅 survives');
+  }
+  for (const clear of ['', null, undefined]) {
+    h = host(PAY);
+    ({ items } = await h.store.load());
+    assert.strictEqual((await h.store.setDue(items[0], clear)).ok, true);
+    assert.strictEqual(noteOf(h), '- [ ] Pay rent ⏫\n', 'empty clears the date');
+  }
+  for (const bad of [undefined, null, '', 0, -1, 1.5, NaN, 'x', '1.5', {}, [], true]) {
+    h = host(PAY);
+    ({ items } = await h.store.load());
+    assert.strictEqual((await h.store.snooze(items[0], bad, '2026-10-07')).ok, false, `snooze(${String(bad)}) is refused`);
+    assert.strictEqual(noteOf(h), PAY);
+  }
+  h = host(PAY);
+  ({ items } = await h.store.load());
+  assert.strictEqual((await h.store.snooze(items[0], '1', '2026-10-07')).ok, true);
+  assert.strictEqual(noteOf(h), '- [ ] Pay rent 📅 2026-10-08 ⏫\n', 'a numeric string is a number of days');
+  h = host(PAY);
+  ({ items } = await h.store.load());
+  await h.store.snooze(items[0], 3, '2026-10-07');
+  assert.strictEqual(noteOf(h), '- [ ] Pay rent 📅 2026-10-10 ⏫\n');
+
+  /* an item with no raw line, or one that is not a reminder, matches nothing */
+  const KEEP = '## Home\n- [ ] Keep me 📅 2026-10-01\n';
+  for (const [name, call] of [
+    ['toggle', (s, it) => s.toggle(it, '2026-10-07')],
+    ['update', (s, it) => s.update(it, { title: 'Ghost' })],
+    ['remove', s => s.remove({ title: 'Ghost', line: 9 })],
+    ['snooze', (s, it) => s.snooze(it, 1, '2026-10-07')],
+    ['setDue', (s, it) => s.setDue(it, '2026-10-09')],
+  ]) {
+    for (const it of [{ title: 'Ghost', line: 6 }, { title: 'Ghost', line: 1 }, { raw: 42, line: 1 }, { raw: 'Some prose line', line: 1 }, null, undefined]) {
+      h = host('# Reminders\nSome prose line\n' + KEEP);
+      const before = noteOf(h);
+      assert.strictEqual((await call(h.store, it)).ok, false, `${name}(${JSON.stringify(it)}) claims nothing`);
+      assert.strictEqual(noteOf(h), before, `${name}: the note is untouched`);
+    }
+  }
+
+  /* add and update cannot be made to write anything but one reminder line */
+  h = host('## Home\n- [ ] A\n');
+  assert.strictEqual(await h.store.add({ title: 'Buy milk', tags: ['family'], group: 'Home' }), '- [ ] Buy milk #family');
+  assert.strictEqual(noteOf(h), '## Home\n- [ ] A\n- [ ] Buy milk #family\n', 'a tag without # is made one, not merged into the title');
+  await h.store.add({ title: 'Evil', repeat: 'every day\n- [x] fake', group: 'Home' });
+  assert.strictEqual(noteOf(h), '## Home\n- [ ] A\n- [ ] Buy milk #family\n- [ ] Evil 🔁 every day - [x] fake\n', 'no second line');
+  await h.store.add({ title: 'Odd\ngroup', group: 'A\n- [ ] sneaky' });
+  assert.strictEqual(noteOf(h).split('\n').slice(-4).join('|'), '|## A - [ ] sneaky|- [ ] Odd group|', 'a newline in a list name stays in its heading');
+  const before0 = noteOf(h);
+  assert.deepStrictEqual(await h.store.add(), { ok: false });
+  assert.deepStrictEqual(await h.store.add({}), { ok: false });
+  assert.deepStrictEqual(await h.store.add(null), { ok: false });
+  assert.strictEqual(noteOf(h), before0, 'nothing added for no fields');
+  h = host(null);
+  assert.deepStrictEqual(await h.store.add(), { ok: false });
+  assert.strictEqual(h.files.size, 0, 'and no note is made for it');
+  h = host('## Home\n- [ ] Keep 📅 2026-10-01\n');
+  ({ items } = await h.store.load());
+  await h.store.update(items[0], { title: 'Keep\n- [x] two', repeat: 'every day\nx', tags: ['t'] });
+  assert.strictEqual(noteOf(h), '## Home\n- [ ] Keep - [x] two #t 📅 2026-10-01 🔁 every day x\n');
+
+  /* L5 through the store: an explicit edit keeps a second copy as text */
+  for (const [line, want] of [
+    ['- [ ] Two priorities ⏫ 🔽 📅 2026-10-01', '- [ ] Two priorities ⏫ 📅 2026-10-01 🔽'],
+    ['- [ ] Two dues 📅 2026-10-01 📅 2026-10-05', '- [ ] Two dues 📅 2026-10-01 📅 2026-10-05'],
+    ['- [ ] Done date on open ✅ 2026-10-01 📅 2026-10-05', '- [ ] Done date on open ✅ 2026-10-01 📅 2026-10-05'],
+    ['- [ ] Note %%📅 2020-01-01%% 📅 2026-10-01', '- [ ] Note %%📅 2020-01-01%% 📅 2026-10-01'],
+    ['- [ ] Link [📅 cal](https://x.y) 📅 2026-10-01', '- [ ] Link [📅 cal](https://x.y) 📅 2026-10-01'],
+    ['- [ ] Ship it ⛔ abc, def 📅 2026-10-01', '- [ ] Ship it 📅 2026-10-01 ⛔ abc, def'],
+    ['- [ ] Pills 🔁 every day 🏁 delete 📅 2026-10-01', '- [ ] Pills 📅 2026-10-01 🔁 every day 🏁 delete'],
+  ]) {
+    h = host(line + '\n');
+    ({ items } = await h.store.load());
+    await h.store.update(items[0], {});
+    assert.strictEqual(noteOf(h), want + '\n', `update loses nothing: ${line}`);
+  }
+
+  /* L7: a repeat with 🏁 can be ticked, and the next one keeps the field */
+  h = host('- [ ] Pills 🔁 every day 🏁 delete 📅 2026-10-01\n');
+  ({ items } = await h.store.load());
+  assert.strictEqual(items[0].repeat, 'every day');
+  r = await h.store.toggle(items[0], '2026-10-01');
+  assert.strictEqual(r.ok, true, 'not refused as an unreadable repeat');
+  assert.strictEqual(noteOf(h), '- [ ] Pills 🔁 every day 🏁 delete 📅 2026-10-02\n- [x] Pills 🔁 every day 🏁 delete 📅 2026-10-01 ✅ 2026-10-01\n');
+
+  /* L10: fenced code is not the note */
+  const FENCE = '## Home\n- [ ] Real 📅 2026-10-01\n\n```md\n# a comment\n- [ ] example in a code block 📅 2026-01-01\n```\n- [ ] After the fence\n';
+  h = host(FENCE);
+  ({ items } = await h.store.load());
+  assert.deepStrictEqual(items.map(i => [i.title, i.group, i.line]), [['Real', 'Home', 1], ['After the fence', 'Home', 7]]);
+  /* a line typed above while the board was open: found again in ITS list,
+     which a "#" inside the fence must not have reset */
+  h.files.set('Reminders.md', 'typed above\n' + FENCE);
+  assert.strictEqual((await h.store.toggle(items[1], '2026-10-07')).ok, true);
+  assert.ok(noteOf(h).includes('- [x] After the fence ✅ 2026-10-07'));
+  assert.ok(noteOf(h).includes('- [ ] example in a code block 📅 2026-01-01'), 'the example is untouched');
+  /* a heading inside a fence is not a place to put a reminder */
+  h = host('```\n## Work\n- [ ] example\n```\n## Home\n- [ ] Real\n');
+  await h.store.add({ title: 'New', group: 'Work' });
+  assert.strictEqual(noteOf(h), '```\n## Work\n- [ ] example\n```\n## Home\n- [ ] Real\n\n## Work\n- [ ] New\n');
+  assert.deepStrictEqual((await h.store.load()).items.map(i => [i.title, i.group]), [['Real', 'Home'], ['New', 'Work']]);
+  h = host('```\n## Work\n```\n- [ ] Loose\n');
+  assert.strictEqual((await h.store.addList('Work')).existed, false, 'a heading in a fence is not a list');
+
+  /* and the 1-pass ⏰ repair leaves a fenced example alone */
+  h = host('```\n- [ ] Ex 📅 2026-10-01 ⏰ 09:30\n```\n- [ ] Real 📅 2026-10-01 ⏰ 09:30\n');
+  r = await h.store.liftTimes();
+  assert.strictEqual(r.changed, 1);
+  assert.strictEqual(noteOf(h), '```\n- [ ] Ex 📅 2026-10-01 ⏰ 09:30\n```\n- [ ] Real ⏰ 09:30 📅 2026-10-01\n');
+
+  /* L11: mixed line endings no longer refuse every write; the majority wins */
+  h = host('## Home\n- [ ] One 📅 2026-10-01\n- [ ] Two 📅 2026-10-02\r\n- [ ] Three\n');
+  ({ items } = await h.store.load());
+  assert.strictEqual(items.length, 3);
+  r = await h.store.toggle(items[1], '2026-10-07');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(noteOf(h), '## Home\n- [ ] One 📅 2026-10-01\n- [x] Two 📅 2026-10-02 ✅ 2026-10-07\n- [ ] Three\n');
+  h = host('## Home\r\n- [ ] One 📅 2026-10-01\r\n- [ ] Two 📅 2026-10-02\n- [ ] Three\r\n');
+  ({ items } = await h.store.load());
+  r = await h.store.toggle(items[0], '2026-10-07');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(noteOf(h), '## Home\r\n- [x] One 📅 2026-10-01 ✅ 2026-10-07\r\n- [ ] Two 📅 2026-10-02\r\n- [ ] Three\r\n');
+  assert.deepStrictEqual(splitLines('a\r\nb\r\n'), { lines: ['a', 'b', ''], eol: '\r\n' });
+  assert.deepStrictEqual(splitLines('a\nb\n'), { lines: ['a', 'b', ''], eol: '\n' });
+  assert.deepStrictEqual(splitLines('a\nb\r\nc\n'), { lines: ['a', 'b', 'c', ''], eol: '\n' });
+  assert.deepStrictEqual(splitLines('a'), { lines: ['a'], eol: '\n' });
+
+  /* L12: an indented reminder moved to another list is no longer a subtask */
+  const NEST = '## Home\n- [ ] Parent\n  - [ ] Child 📅 2026-10-01\n## Work\n- [ ] Report\n';
+  h = host(NEST);
+  ({ items } = await h.store.load());
+  await h.store.update(items.find(i => i.title === 'Child'), { group: 'Work' });
+  assert.strictEqual(noteOf(h), '## Home\n- [ ] Parent\n## Work\n- [ ] Report\n- [ ] Child 📅 2026-10-01\n', 'it joins the new list at the top level');
+  h = host(NEST);
+  ({ items } = await h.store.load());
+  await h.store.update(items.find(i => i.title === 'Child'), { title: 'Kid' });
+  assert.strictEqual(noteOf(h), '## Home\n- [ ] Parent\n  - [ ] Kid 📅 2026-10-01\n## Work\n- [ ] Report\n', 'an edit that stays put keeps its indent');
+
+  /* S5: a list name is not case-sensitive */
+  h = host(START);
+  const startText = noteOf(h);
+  for (const n of ['family', 'FAMILY', '  fAmIlY ', '## family']) {
+    r = await h.store.addList(n);
+    assert.deepStrictEqual([r.ok, r.name, r.existed], [true, 'Family', true], `addList(${JSON.stringify(n)}) finds Family`);
+    assert.strictEqual(noteOf(h), startText, 'and adds no second heading');
+  }
+  /* the same goes for a reminder added to a list typed in another case —
+     unless the note really has both spellings, when the exact one wins */
+  h = host('## Groceries\n- [ ] Milk\n');
+  await h.store.add({ title: 'Bread', group: 'groceries' });
+  assert.strictEqual(noteOf(h), '## Groceries\n- [ ] Milk\n- [ ] Bread\n');
+  h = host('## Groceries\n- [ ] Milk\n\n## groceries\n- [ ] Eggs\n');
+  await h.store.add({ title: 'Bread', group: 'groceries' });
+  assert.strictEqual(noteOf(h), '## Groceries\n- [ ] Milk\n\n## groceries\n- [ ] Eggs\n- [ ] Bread\n');
 
   console.log('store OK');
 })().catch(e => { console.error(e); process.exit(1); });

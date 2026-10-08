@@ -13,6 +13,8 @@ const D = require('./dates');
 
 const PRIORITY_LABEL = { highest: 'Highest', high: 'High', medium: 'Medium', normal: 'Normal', low: 'Low', lowest: 'Lowest' };
 
+let fieldSeq = 0;
+
 class EditorModal extends Modal {
   constructor(app, opts) {
     super(app);
@@ -37,16 +39,16 @@ class EditorModal extends Modal {
 
     /* what */
     this.field(f, 'What', row => {
-      this.titleEl = input(row, 'nd-in nd-in-title', { type: 'text', value: this.draft.title, placeholder: 'Sign papers for mom’s medical aid' });
+      this.titleEl = input(row, 'nd-in nd-in-title', { type: 'text', value: this.draft.title, placeholder: 'Renew the car licence', 'aria-label': 'What' });
       this.titleEl.addEventListener('input', () => { this.draft.title = this.titleEl.value; });
       this.titleEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); this.save(); } });
     });
 
     /* when */
     this.field(f, 'When', row => {
-      this.dueEl = input(row, 'nd-in nd-in-date', { type: 'date', value: this.draft.due });
+      this.dueEl = input(row, 'nd-in nd-in-date', { type: 'date', value: this.draft.due, 'aria-label': 'Due date' });
       this.dueEl.addEventListener('change', () => { this.draft.due = this.dueEl.value; this.renderWhen(); });
-      this.timeEl = input(row, 'nd-in nd-in-time', { type: 'time', value: this.draft.time });
+      this.timeEl = input(row, 'nd-in nd-in-time', { type: 'time', value: this.draft.time, 'aria-label': 'Time' });
       this.timeEl.addEventListener('change', () => { this.draft.time = this.timeEl.value; this.renderWhen(); });
     });
 
@@ -68,19 +70,26 @@ class EditorModal extends Modal {
     /* how urgent */
     this.field(f, 'Priority', row => {
       this.prioEl = el(row, 'div', 'nd-seg');
+      this.prioEl.setAttribute('role', 'group');
+      this.prioEl.setAttribute('aria-label', 'Priority');
       for (const p of PRIORITIES) {
         const b = button(this.prioEl, 'nd-seg-b' + (this.draft.priority === p ? ' is-on' : ''), PRIORITY_LABEL[p], () => {
           this.draft.priority = p;
-          for (const n of Array.prototype.slice.call(this.prioEl.children)) n.classList.remove('is-on');
+          for (const n of Array.prototype.slice.call(this.prioEl.children)) {
+            n.classList.remove('is-on');
+            n.setAttribute('aria-pressed', 'false');
+          }
           b.classList.add('is-on');
+          b.setAttribute('aria-pressed', 'true');
         });
         b.setAttribute('data-priority', p);
+        b.setAttribute('aria-pressed', this.draft.priority === p ? 'true' : 'false');
       }
     });
 
     /* repeat */
     this.field(f, 'Repeat', row => {
-      this.repeatEl = input(row, 'nd-in', { type: 'text', value: this.draft.repeat, placeholder: 'every month', list: 'nd-repeat-presets' });
+      this.repeatEl = input(row, 'nd-in', { type: 'text', value: this.draft.repeat, placeholder: 'every month', list: 'nd-repeat-presets', 'aria-label': 'Repeat' });
       const dl = el(row, 'datalist', null);
       dl.id = 'nd-repeat-presets';
       for (const p of R.PRESETS) { const o = el(dl, 'option', null); o.value = p.rule; }
@@ -89,7 +98,7 @@ class EditorModal extends Modal {
 
     /* where it belongs */
     this.field(f, 'Group', row => {
-      this.groupEl = input(row, 'nd-in', { type: 'text', value: this.draft.group, placeholder: 'Family', list: 'nd-group-presets' });
+      this.groupEl = input(row, 'nd-in', { type: 'text', value: this.draft.group, placeholder: 'Home', list: 'nd-group-presets', 'aria-label': 'Group' });
       const dl = el(row, 'datalist', null);
       dl.id = 'nd-group-presets';
       for (const g of this.opts.groups || []) { const o = el(dl, 'option', null); o.value = g; }
@@ -97,15 +106,18 @@ class EditorModal extends Modal {
     });
 
     this.field(f, 'Tags', row => {
-      this.tagsEl = input(row, 'nd-in', { type: 'text', value: (this.draft.tags || []).join(' '), placeholder: '#family #health' });
+      this.tagsEl = input(row, 'nd-in', { type: 'text', value: (this.draft.tags || []).join(' '), placeholder: '#home #admin', 'aria-label': 'Tags' });
       this.tagsEl.addEventListener('input', () => {
-        this.draft.tags = this.tagsEl.value.split(/\s+/).filter(Boolean).map(t => (t.charAt(0) === '#' ? t : '#' + t));
+        /* "work, urgent" is two tags, not "#work," and "#urgent". */
+        this.draft.tags = this.tagsEl.value.split(/[\s,]+/).filter(Boolean).map(t => (t.charAt(0) === '#' ? t : '#' + t)).filter(t => t.length > 1);
       });
     });
 
     const foot = el(c, 'div', 'nd-modal-foot');
     if (!this.opts.isNew && this.opts.onDelete) {
       button(foot, 'nd-btn nd-btn-danger', 'Delete', () => {
+        if (this.busy) return undefined;
+        this.busy = true;
         const p = this.opts.onDelete();
         this.close();
         return p;
@@ -121,9 +133,17 @@ class EditorModal extends Modal {
 
   field(parent, label, fn) {
     const w = el(parent, 'div', 'nd-field');
-    el(w, 'label', 'nd-label', label);
+    const lab = el(w, 'label', 'nd-label', label);
     const row = el(w, 'div', 'nd-field-row');
     fn(row);
+    /* The label points at the field's first input, so a click on it focuses
+       the field; each input also carries its own aria-label for a screen
+       reader (the date and time share one label). */
+    const first = row.querySelector('input');
+    if (first) {
+      if (!first.id) first.id = 'nd-f-' + (++fieldSeq);
+      lab.setAttribute('for', first.id);
+    }
     return w;
   }
 
@@ -137,6 +157,8 @@ class EditorModal extends Modal {
       bits.push(`Due ${D.relative(this.draft.due, today).toLowerCase()}${this.draft.time ? ' at ' + this.draft.time : ''}`);
     } else {
       bits.push('No date — it waits in Someday');
+      /* A time is only ever a time ON a day: with no day nothing will alert. */
+      if (this.draft.time) bits.push("a time alone won't alert you");
     }
     const desc = R.describe(this.draft.repeat);
     if (this.draft.repeat && !desc) bits.push("that repeat isn't one I understand yet");
@@ -147,7 +169,10 @@ class EditorModal extends Modal {
 
   save() {
     const title = String(this.draft.title || '').trim();
-    if (!title) { if (this.titleEl) this.titleEl.focus(); return; }
+    if (!title) { if (this.titleEl) this.titleEl.focus(); return undefined; }
+    /* Enter held down, or Save tapped twice: one write, not two. */
+    if (this.busy) return undefined;
+    this.busy = true;
     const fields = {
       title, due: this.draft.due || '', time: this.draft.time || '',
       priority: this.draft.priority || 'normal', repeat: this.draft.repeat || '',

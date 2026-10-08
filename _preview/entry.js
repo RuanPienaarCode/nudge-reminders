@@ -18,11 +18,11 @@ const NOTE = q.get('empty') === '1' ? '# Reminders\n\n' : [
   '',
   'The things I must not forget.',
   '',
-  '## Family',
-  `- [ ] Sign papers for mom's medical aid 📅 ${d(-3)} ⏫ #family`,
-  `- [ ] Phone the medical aid about the referral ⏰ 09:30 #family 📅 ${T}`,
-  `- [ ] Collect mom's scans from the radiologist 📅 ${T} 🔺 #family #health`,
-  `- [x] Fetch the prescription 📅 ${d(-4)} ✅ ${d(-4)} #family`,
+  '## Home',
+  `- [ ] Fix the leaking garden tap 📅 ${d(-3)} ⏫ #home`,
+  `- [ ] Phone the plumber about the quote ⏰ 09:30 #home 📅 ${T}`,
+  `- [ ] Collect the parcel from the post office 📅 ${T} 🔺 #home #errands`,
+  `- [x] Buy light bulbs 📅 ${d(-4)} ✅ ${d(-4)} #home`,
   '',
   '## Admin',
   `- [ ] Renew the licence disc 📅 ${d(1)} #car`,
@@ -62,7 +62,7 @@ function log(text) {
   console.log('[Reminders.md]\n' + text);
 }
 
-const settings = Object.assign({}, DEFAULT_SETTINGS, { name: 'Ruan', showDone: true });
+const settings = Object.assign({}, DEFAULT_SETTINGS, { name: 'Sam', showDone: true });
 if (q.get('tint')) settings.tint = q.get('tint');
 if (q.get('surface')) settings.surface = q.get('surface');
 if (q.get('mode')) settings.mode = q.get('mode');
