@@ -79,9 +79,17 @@ const settle = () => new Promise(r => setTimeout(r, 5));
   await p.store.update(fresh, { title: 'Seam add 2' });
   const f2 = (await p.store.load()).items.find(i => i.title === 'Seam add 2');
   await p.store.setDue(f2, '2026-10-20');
+  const f3 = (await p.store.load()).items.find(i => i.title === 'Seam add 2');
+  const r4 = await p.store.setDate(f3, 'scheduled', '2026-10-18');
+  assert.deepStrictEqual(r4, { ok: true }, 'setDate through the seam returns the store result');
+  assert.ok(files.get('Reminders.md').includes('- [ ] Seam add 2 📅 2026-10-20 ⏳ 2026-10-18'), 'and wrote ⏳');
   await p.store.remove((await p.store.load()).items.find(i => i.title === 'Seam add 2'));
   await p.store.addList('Work');
-  assert.strictEqual(refreshes, before + 6, 'snooze, update, setDue, remove and addList each refresh once');
+  assert.strictEqual(refreshes, before + 7, 'snooze, update, setDue, setDate, remove and addList each refresh once');
+  /* a refused setDate is a write that did not happen */
+  const refused = refreshes;
+  assert.deepStrictEqual(await p.store.setDate(items[0], 'created', '2026-10-18'), { ok: false });
+  assert.strictEqual(refreshes, refused, 'a refused setDate does not refresh');
 
   /* a write that changed nothing does not */
   const stale = Object.assign({}, items[0], { raw: '- [ ] gone entirely', title: 'gone entirely', line: 40 });

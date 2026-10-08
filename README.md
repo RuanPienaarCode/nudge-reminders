@@ -55,7 +55,7 @@ Obsidian Tasks' emoji vocabulary, used as-is:
 | `🔺 ⏫ 🔼 🔽 ⏬` | highest, high, medium, low, lowest |
 | `🔁 every month` | repeat — `every day / week / month / year`, `every 3 days`, `every weekday`, `every monday`, `every week on Monday, Thursday`, `every month on the 1st` / `on the last` / `on the second Tuesday`, any of them `when done`. A repeat Nudge can't read is left open when you tick it, never silently ended |
 | `✅ 2026-09-21` | ticked on |
-| `➕ 🛫 ⏳ 🆔 ⛔` | read, kept and written back untouched |
+| `➕ 🛫 ⏳ 🆔 ⛔` | read, kept and written back. The board doesn't show them; a repeat moves `🛫` and `⏳` along with its due date, and other plugins can move them through the store (below) |
 
 Anything Nudge doesn't drive the UI from still round-trips, so a reminder edited
 here never comes back smaller than it went in.
@@ -77,6 +77,35 @@ too.
 Nothing else in the vault is touched. Nudge makes **no network requests** and
 collects no telemetry; the only clipboard use is the *Copy the deep link*
 command, when you run it.
+
+## For other plugins
+
+The store is Nudge's API. Read and change reminders through it rather than
+parsing or patching the note yourself: its writes follow the board's rules (one
+line changed, the rest of the note left byte for byte, `⏰` kept in front of the
+Tasks fields), queue behind each other, and refresh an open board.
+
+```js
+const store = app.plugins.plugins['nudge-reminders']?.store;
+```
+
+| Call | Does | Resolves to |
+|---|---|---|
+| `load()` | reads the note | `{ text, items, groups, lists }` |
+| `add(fields)` | adds a reminder from `title`, `due`, `time`, `priority`, `repeat`, `tags`, `group`, … | the line written, or `{ ok: false }` |
+| `addList(name)` | adds a `##` list | `{ ok, name, existed }` |
+| `toggle(item, today?)` | ticks or unticks; ticking a `🔁` leaves the next one open | `{ ok, rolled, reason? }` — `reason` is `'repeat'` (a repeat Nudge can't read, left open) or `'stale'` |
+| `update(item, fields)` | re-spells the line; a new `group` moves it to that list | `{ ok, moved? }` |
+| `snooze(item, days, today?)` | sets `📅` to today plus `days` | `{ ok }` |
+| `setDate(item, field, date)` | moves one date and no other: `field` is `'due'` (`📅`), `'scheduled'` (`⏳`) or `'start'` (`🛫`); `date` is `YYYY-MM-DD`, or `''` / `null` to clear it | `{ ok }` |
+| `setDue(item, date)` | `setDate(item, 'due', date)` | `{ ok }` |
+| `remove(item)` | deletes the line | `{ ok }` |
+
+`item` is one of `load().items`, passed back as it came: the store finds the
+line again by its text and list, even when lines above it have moved. A call it
+can't carry out — an unknown field, a date that isn't a real date, a reminder
+that is no longer in the note — writes nothing and resolves to `{ ok: false }`.
+Tick through `toggle`: it is what rolls a repeat forward.
 
 ## Building it
 

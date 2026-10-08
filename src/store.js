@@ -48,6 +48,8 @@ const FAMILY = {
   '⏳': '(?:⏳|⌛)\\uFE0F?',
 };
 const markerRe = emoji => FAMILY[emoji] || `${reEsc(emoji)}\\uFE0F?`;
+/* The dates another plugin may move, by the names parseLine gives them. */
+const FIELD_EMOJI = { due: '📅', scheduled: '⏳', start: '🛫' };
 
 /* Both date writers finish with liftTime: a date appended to a line ending
    in ⏰ would otherwise put ⏰ inside the Tasks field run, and a line already
@@ -427,15 +429,20 @@ function makeStore(plugin) {
     });
   }
 
-  /* A real ISO date, or nothing to clear the date. Anything else is refused
-     rather than written: a 📅 whose value does not parse stops being a
-     due date. */
-  async function setDue(item, due) {
-    if (due && !D.isISO(due)) return { ok: false };
+  /* Move one dated field and no other: a reminder whose only date is ⏳
+     moves its ⏳, and does not gain a 📅 nobody set. `field` is 'due',
+     'scheduled' or 'start'; `date` a real ISO date, or nothing to clear the
+     field. Anything else is refused rather than written: a date whose value
+     does not parse stops being a date. */
+  async function setDate(item, field, date) {
+    const emoji = Object.prototype.hasOwnProperty.call(FIELD_EMOJI, field) ? FIELD_EMOJI[field] : '';
+    if (!emoji || (date && !D.isISO(date))) return { ok: false };
     return withLines(item, (lines, i) => {
-      lines[i] = due ? setDateToken(lines[i], '📅', due) : dropToken(lines[i], '📅');
+      lines[i] = date ? setDateToken(lines[i], emoji, date) : dropToken(lines[i], emoji);
     });
   }
+
+  const setDue = (item, due) => setDate(item, 'due', due);
 
   async function remove(item) {
     return withLines(item, (lines, i) => { lines.splice(i, 1); });
@@ -492,7 +499,7 @@ function makeStore(plugin) {
     path, icsPath, load, isOurs,
     ensureFile: queued(ensureFile), add: queued(add), addList: queued(addList),
     toggle: queued(toggle), update: queued(update), snooze: queued(snooze),
-    setDue: queued(setDue), remove: queued(remove), liftTimes: queued(liftTimes),
+    setDue: queued(setDue), setDate: queued(setDate), remove: queued(remove), liftTimes: queued(liftTimes),
     exportICS: queued(exportICS),
   };
 }

@@ -620,5 +620,104 @@ function host(text) {
   await h.store.add({ title: 'Bread', group: 'groceries' });
   assert.strictEqual(noteOf(h), '## Groceries\n- [ ] Milk\n\n## groceries\n- [ ] Eggs\n- [ ] Bread\n');
 
+  /* ---- setDate: ⏳ and 🛫 through the seam --------------------------- */
+  /* Found by the Fortnight audit, 7 Oct 2026. Fortnight moves reminders only
+     through this store, and setDue was the one date it could write: a
+     reminder whose only date is ⏳ or 🛫 could not be moved, and before
+     Fortnight refused, setDue on "⏳ 2026-10-07" wrote "⏳ 2026-10-07 📅
+     2026-10-09" — a deadline nobody set, with ⏳ left on the old day.
+     setDate moves the one field it is asked to move. Each case: the line,
+     the call, the line written, what the Tasks reader above finds on it
+     (null: a marker that reader does not know), and what Nudge reads back
+     as [due, scheduled, start, time]. */
+  for (const [name, line, act, want, fields, back] of [
+    ['a ⏳-only line: ⏳ moves and no 📅 appears',
+      '- [ ] Call bank ⏳ 2026-10-07', (st, it) => st.setDate(it, 'scheduled', '2026-10-09'),
+      '- [ ] Call bank ⏳ 2026-10-09', ['⏳ 2026-10-09'], ['', '2026-10-09', '', '']],
+    ['⌛ is ⏳ too, and keeps the marker the user typed',
+      '- [ ] Call bank ⌛ 2026-10-07', (st, it) => st.setDate(it, 'scheduled', '2026-10-09'),
+      '- [ ] Call bank ⌛ 2026-10-09', null, ['', '2026-10-09', '', '']],
+    ['🛫 moves and 📅 stays',
+      '- [ ] Pack for the trip 🛫 2026-10-07 📅 2026-10-10', (st, it) => st.setDate(it, 'start', '2026-10-08'),
+      '- [ ] Pack for the trip 🛫 2026-10-08 📅 2026-10-10', ['🛫 2026-10-08', '📅 2026-10-10'], ['2026-10-10', '', '2026-10-08', '']],
+    ['a 🛫 the line did not have goes at the end',
+      '- [ ] Pack for the trip 📅 2026-10-10 ⏫', (st, it) => st.setDate(it, 'start', '2026-10-08'),
+      '- [ ] Pack for the trip 📅 2026-10-10 ⏫ 🛫 2026-10-08', ['📅 2026-10-10', '⏫', '🛫 2026-10-08'], ['2026-10-10', '', '2026-10-08', '']],
+    ['due through setDate moves 📅 and leaves ⏳',
+      '- [ ] Call bank ⏳ 2026-10-07 📅 2026-10-08', (st, it) => st.setDate(it, 'due', '2026-10-09'),
+      '- [ ] Call bank ⏳ 2026-10-07 📅 2026-10-09', ['⏳ 2026-10-07', '📅 2026-10-09'], ['2026-10-09', '2026-10-07', '', '']],
+    ['clearing ⏳ (null) leaves 📅',
+      '- [ ] Call bank ⏳ 2026-10-07 📅 2026-10-10', (st, it) => st.setDate(it, 'scheduled', null),
+      '- [ ] Call bank 📅 2026-10-10', ['📅 2026-10-10'], ['2026-10-10', '', '', '']],
+    ['clearing 🛫 (empty string) leaves 📅 and 🔁',
+      '- [ ] Pack for the trip 🛫 2026-10-07 📅 2026-10-10 🔁 every month', (st, it) => st.setDate(it, 'start', ''),
+      '- [ ] Pack for the trip 📅 2026-10-10 🔁 every month', ['📅 2026-10-10', '🔁 every month'], ['2026-10-10', '', '', '']],
+    ['clearing (undefined) a field the line does not have changes nothing',
+      '- [ ] Call bank 📅 2026-10-10', (st, it) => st.setDate(it, 'start', undefined),
+      '- [ ] Call bank 📅 2026-10-10', ['📅 2026-10-10'], ['2026-10-10', '', '', '']],
+    ['⏳ moved on a timed line: ⏰ stays in front',
+      '- [ ] Call bank ⏰ 09:00 ⏳ 2026-10-07', (st, it) => st.setDate(it, 'scheduled', '2026-10-09'),
+      '- [ ] Call bank ⏰ 09:00 ⏳ 2026-10-09', ['⏳ 2026-10-09'], ['', '2026-10-09', '', '09:00']],
+    ['⏳ added to a timed line lands after the tag, ⏰ still in front',
+      '- [ ] Call bank ⏰ 09:00 #admin', (st, it) => st.setDate(it, 'scheduled', '2026-10-09'),
+      '- [ ] Call bank ⏰ 09:00 #admin ⏳ 2026-10-09', ['#admin', '⏳ 2026-10-09'], ['', '2026-10-09', '', '09:00']],
+    ['🛫 moved on an old-order line: ⏰ comes out of the run',
+      '- [ ] Pills 🛫 2026-10-01 ⏰ 08:00 📅 2026-10-07', (st, it) => st.setDate(it, 'start', '2026-10-02'),
+      '- [ ] Pills ⏰ 08:00 🛫 2026-10-02 📅 2026-10-07', ['🛫 2026-10-02', '📅 2026-10-07'], ['2026-10-07', '', '2026-10-02', '08:00']],
+    ['⏳ cleared on a timed line',
+      '- [ ] Pills ⏰ 08:00 ⏳ 2026-10-01 📅 2026-10-07', (st, it) => st.setDate(it, 'scheduled', null),
+      '- [ ] Pills ⏰ 08:00 📅 2026-10-07', ['📅 2026-10-07'], ['2026-10-07', '', '', '08:00']],
+    ['🛫 moved with a ^block-id: the id stays last',
+      '- [ ] Pack ⏰ 07:00 #trip 🛫 2026-10-07 ^pack', (st, it) => st.setDate(it, 'start', '2026-10-08'),
+      '- [ ] Pack ⏰ 07:00 #trip 🛫 2026-10-08 ^pack', ['#trip', '🛫 2026-10-08'], ['', '', '2026-10-08', '07:00']],
+    ['🛫 added with a ^block-id: before the id, after ⏰',
+      '- [ ] Pack ⏰ 07:00 ^pack', (st, it) => st.setDate(it, 'start', '2026-10-08'),
+      '- [ ] Pack ⏰ 07:00 🛫 2026-10-08 ^pack', ['🛫 2026-10-08'], ['', '', '2026-10-08', '07:00']],
+  ]) {
+    h = host(`## Admin\n${line}\n`);
+    ({ items } = await h.store.load());
+    r = await act(h.store, items[0]);
+    assert.deepStrictEqual(r, { ok: true }, `${name}: ok`);
+    const out = noteOf(h).split('\n')[1];
+    assert.strictEqual(out, want, name);
+    if (fields) assert.deepStrictEqual(tasksRead(out), fields, `${name}: Tasks reads every field`);
+    ({ items } = await h.store.load());
+    assert.deepStrictEqual([items[0].due, items[0].scheduled, items[0].start, items[0].time], back, `${name}: Nudge reads it back`);
+  }
+
+  /* only the one line changes — not the prose quoting the same date, not
+     another reminder scheduled for the same day */
+  h = host('# Reminders\n\nProse that says ⏳ 2026-10-07.\n\n## Admin\n- [ ] Call bank ⏳ 2026-10-07\n- [ ] Pay rent ⏳ 2026-10-07 📅 2026-10-08\n');
+  ({ items } = await h.store.load());
+  await h.store.setDate(items[0], 'scheduled', '2026-10-09');
+  assert.strictEqual(noteOf(h), '# Reminders\n\nProse that says ⏳ 2026-10-07.\n\n## Admin\n- [ ] Call bank ⏳ 2026-10-09\n- [ ] Pay rent ⏳ 2026-10-07 📅 2026-10-08\n');
+
+  /* a field it does not know, or a date that is not one, writes nothing */
+  const CALL = '## Admin\n- [ ] Call bank ⏳ 2026-10-07\n';
+  for (const [field, date] of [
+    ['created', '2026-10-09'], ['done', '2026-10-09'], ['Scheduled', '2026-10-09'], ['⏳', '2026-10-09'],
+    ['toString', '2026-10-09'], ['__proto__', '2026-10-09'], [undefined, '2026-10-09'], [null, null],
+    ['scheduled', '2026-10-9'], ['scheduled', 'tomorrow'], ['scheduled', '2026-02-30'],
+    ['scheduled', '2026-10-09T00:00'], ['scheduled', 20261009], ['scheduled', {}],
+  ]) {
+    h = host(CALL);
+    ({ items } = await h.store.load());
+    assert.deepStrictEqual(await h.store.setDate(items[0], field, date), { ok: false }, `setDate(${JSON.stringify(field)}, ${JSON.stringify(date)}) is refused`);
+    assert.strictEqual(noteOf(h), CALL, 'and the note is untouched');
+  }
+
+  /* an item that is not a reminder line claims nothing */
+  for (const it of [{ title: 'Ghost', line: 1 }, { raw: 42, line: 1 }, { raw: 'Some prose line', line: 1 }, null]) {
+    h = host('# Reminders\nSome prose line\n' + CALL);
+    assert.deepStrictEqual(await h.store.setDate(it, 'scheduled', '2026-10-09'), { ok: false }, `setDate(${JSON.stringify(it)}) claims nothing`);
+    assert.strictEqual(noteOf(h), '# Reminders\nSome prose line\n' + CALL);
+  }
+
+  /* it waits its turn like every other write: two moves at once both land */
+  h = host('## Admin\n- [ ] Call bank ⏳ 2026-10-07\n- [ ] Pack 🛫 2026-10-07\n');
+  ({ items } = await h.store.load());
+  await Promise.all([h.store.setDate(items[0], 'scheduled', '2026-10-09'), h.store.setDate(items[1], 'start', '2026-10-08')]);
+  assert.strictEqual(noteOf(h), '## Admin\n- [ ] Call bank ⏳ 2026-10-09\n- [ ] Pack 🛫 2026-10-08\n');
+
   console.log('store OK');
 })().catch(e => { console.error(e); process.exit(1); });

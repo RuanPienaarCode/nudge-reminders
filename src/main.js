@@ -124,7 +124,7 @@ class NudgePlugin extends Plugin {
      ribbon badge. So a write that landed refreshes both, here, once. The
      board's own store is a separate instance and refreshes itself. */
   seam(store) {
-    const writes = ['add', 'addList', 'toggle', 'update', 'snooze', 'setDue', 'remove', 'liftTimes'];
+    const writes = ['add', 'addList', 'toggle', 'update', 'snooze', 'setDue', 'setDate', 'remove', 'liftTimes'];
     const wrapped = Object.assign({}, store);
     for (const name of writes) {
       const inner = store[name];
