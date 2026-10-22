@@ -15,8 +15,11 @@ const toMin = hm => {
   return (+p[0] || 0) * 60 + (+p[1] || 0);
 };
 
-/* Derived, not remembered: a key survives a restart, and rolls over at
-   midnight so a still-overdue reminder speaks once more tomorrow. */
+/* Derived, not remembered: the key is built from the reminder itself, so it
+   needs no storage of its own, and it rolls over at midnight so a
+   still-overdue reminder speaks once more tomorrow. The set of keys already
+   spoken lives in memory only (src/main.js), so after a relaunch a reminder
+   that is still due is told again — on purpose, so a restart never hides it. */
 const keyFor = (item, today) => `${today}|${item.due || ''}|${item.time || ''}|${item.title}`;
 
 function pending(items, opts) {
@@ -24,7 +27,7 @@ function pending(items, opts) {
   const today = o.today || D.todayISO();
   const now = toMin(o.now || D.nowHM());
   const lead = o.leadMinutes === undefined ? 10 : Number(o.leadMinutes);
-  const dailyAt = toMin(o.allDayAlarmTime || '09:00');
+  const dailyAt = toMin(D.parseClock(o.allDayAlarmTime) || '09:00');
   const fired = new Set(o.fired || []);
 
   return (items || []).filter(i => {

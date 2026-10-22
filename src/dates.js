@@ -21,6 +21,27 @@ function isISO(s) {
 
 const isTime = s => TIME_RE.test(String(s || ''));
 
+/* The one reader for a clock time someone TYPED (the "Daily hour" setting).
+   Notices and the phone alarm both go through it, so they cannot disagree
+   about what "8am" means. Accepts 7:30, 07:30, 8am, 9:30pm, 21h00 and 21h;
+   returns "HH:MM", or '' when it is not a time — the caller then keeps what it
+   had rather than guessing. A bare "9" is left unread: it could be anything. */
+function parseClock(s) {
+  if (typeof s !== 'string') return '';
+  const t = s.trim().toLowerCase();
+  const p = n => String(n).padStart(2, '0');
+  let m = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/.exec(t);
+  if (m) {
+    const h = +m[1], min = m[2] === undefined ? 0 : +m[2];
+    if (h < 1 || h > 12 || min > 59) return '';
+    return `${p((h % 12) + (m[3] === 'pm' ? 12 : 0))}:${p(min)}`;
+  }
+  m = /^(\d{1,2})(?::|h)(\d{2})$/.exec(t) || /^(\d{1,2})h()$/.exec(t);
+  if (!m) return '';
+  const h = +m[1], min = m[2] === '' ? 0 : +m[2];
+  return h > 23 || min > 59 ? '' : `${p(h)}:${p(min)}`;
+}
+
 /* UTC throughout: the only job of the Date here is day counting. */
 function toDate(iso) {
   const m = ISO_RE.exec(String(iso || ''));
@@ -107,6 +128,6 @@ function relative(iso, today) {
 }
 
 module.exports = {
-  isISO, isTime, addDays, addMonths, diffDays, dow, todayISO, nowHM,
+  isISO, isTime, parseClock, addDays, addMonths, diffDays, dow, todayISO, nowHM,
   startOfWeek, human, shortDate, relative, DAYS, DAYS_SHORT, MONTHS,
 };

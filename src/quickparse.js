@@ -1,7 +1,7 @@
 'use strict';
 /* The quick-add bar: one typed line becomes a reminder.
 
-   "Sign papers for mom's medical aid tomorrow at 9am !high #family"
+   "Sign the school's permission slip tomorrow at 9am !high #family"
 
    The governing rule is that it must never eat a word it did not understand.
    Every pattern here is deliberately narrow — a bare number is not a time, a
@@ -17,6 +17,9 @@ const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', '
 const MONTH_WORD = '(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?';
 const YEAR_TAIL = '(?:,?\\s+(\\d{4}))?';
 const DAYS = { sunday: 0, sun: 0, monday: 1, mon: 1, tuesday: 2, tue: 2, wednesday: 3, wed: 3, thursday: 4, thu: 4, friday: 5, fri: 5, saturday: 6, sat: 6 };
+/* The full names only: where a weekday is the last word with nothing to mark
+   it as a date, "sat" and "sun" are far more likely to be ordinary words. */
+const FULL_DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const WORD_PRIORITY = { highest: 'highest', urgent: 'highest', high: 'high', med: 'medium', medium: 'medium', low: 'low', lowest: 'lowest' };
 
 /* No lookbehind: the leading boundary is always captured and put back. */
@@ -37,6 +40,22 @@ function nextDow(today, target) {
   return D.addDays(today, ((target - D.dow(today)) + 7) % 7);
 }
 
+/* Where a repeat with no date of its own begins: its first occurrence ON OR
+   AFTER today, worked out by recur itself (the step from yesterday is the
+   first date strictly after yesterday). The interval is dropped for this one
+   step — "every 2 weeks on tuesday" starts at the next Tuesday, not in two
+   weeks. A plain "every day / week / month" starts today, and "every monday"
+   at the next Monday (today counts). */
+function firstOccurrence(rule, today) {
+  const r = R.parse(rule);
+  if (!r) return today;
+  if (r.kind === 'dayOfWeek') return nextDow(today, r.day);
+  if (r.kind === 'weekday' || r.kind === 'weekOn' || r.kind === 'monthDay' || r.kind === 'monthNth') {
+    return R.nextDue(rule.replace(/^every\s+\d+\s+/, 'every '), D.addDays(today, -1)) || today;
+  }
+  return today;
+}
+
 /* A day and a month: in the year given, or else this year if it is still
    ahead, else the next year that has it (29 Feb waits for a leap year).
    '' when there is no such date at all — 31 April is not a guess. */
@@ -51,8 +70,11 @@ function dateFromDayMonth(day, monthIdx, today, year) {
   return '';
 }
 
-function parseQuick(text, today) {
+/* `now` ("HH:MM") is only needed for a time typed with no date, which has to
+   land today or tomorrow depending on whether that time is still ahead. */
+function parseQuick(text, today, now) {
   const day = D.isISO(today) ? today : D.todayISO();
+  const clock = D.isTime(now) ? now : D.nowHM();
   let s = ' ' + String(text || '') + ' ';
   const out = { title: '', due: '', time: '', priority: 'normal', repeat: '', tags: [] };
 
@@ -72,11 +94,33 @@ function parseQuick(text, today) {
   s = s.replace(/(^|\s)(#[^\s#]*[^\s#\d][^\s#]*)/g, (all, pre, tag) => { out.tags.push(tag); return pre; });
 
   /* repeats before dates, or "every monday" loses its weekday to the date
-     matcher and comes back as a one-off */
-  cut(new RegExp(LEAD + '(every\\s+(?:\\d+\\s+)?[a-z]+(?:\\s+when\\s+done)?)\\b', 'i'), (all, pre, rule) => {
-    if (!R.parse(rule)) return false;
-    out.repeat = squash(rule).toLowerCase();
-  });
+     matcher and comes back as a one-off. A rule can carry an "on …" tail
+     ("every month on the 1st", "every week on monday, thursday"), so try the
+     longest run of words after "every" that recur understands and shrink one
+     word at a time: whatever is left over — "tomorrow", "at 9am", more of the
+     title — stays where it was. */
+  const everyRe = new RegExp(LEAD + '(every)(?=\\s)', 'gi');
+  let em;
+  while ((em = everyRe.exec(s))) {
+    const start = em.index + em[1].length;
+    const ends = [];
+    const wordRe = /\S+/g;
+    wordRe.lastIndex = start;
+    let w;
+    while (ends.length < 12 && (w = wordRe.exec(s))) ends.push(wordRe.lastIndex);
+    let taken = 0;
+    for (let k = ends.length; k >= 2; k--) {
+      const rule = s.slice(start, ends[k - 1]);
+      /* recur tolerates a dangling comma or "and" in a day list, but a rule
+         never ENDS on one — that word belongs to the sentence, so leave it */
+      if (/,$|\band$/i.test(rule)) continue;
+      if (R.parse(rule)) { taken = k; break; }
+    }
+    if (!taken) continue;
+    out.repeat = squash(s.slice(start, ends[taken - 1])).toLowerCase();
+    s = s.slice(0, start) + s.slice(ends[taken - 1]);
+    break;
+  }
 
   /* priority */
   cut(new RegExp(LEAD + '!(' + Object.keys(WORD_PRIORITY).join('|') + ')\\b', 'i'), (all, pre, word) => {
@@ -92,9 +136,11 @@ function parseQuick(text, today) {
     if (hh > 12) return false;
     out.time = hm(hh % 12 === 0 ? 0 : hh, m ? +m : 0, ap);
   });
+  /* H:MM is a time only after "at" or with a two-digit hour (09:15, 21:30):
+     "John 3:16" is a verse, not a quarter past three. */
   if (!out.time) {
-    cut(new RegExp(LEAD + '(?:at\\s+)?([01]?\\d|2[0-3]):([0-5]\\d)\\b'), (all, pre, h, m) => {
-      out.time = `${String(+h).padStart(2, '0')}:${m}`;
+    cut(new RegExp(LEAD + '(?:at\\s+([01]?\\d|2[0-3])|([01]\\d|2[0-3])):([0-5]\\d)\\b'), (all, pre, h1, h2, m) => {
+      out.time = `${String(+(h1 || h2)).padStart(2, '0')}:${m}`;
     });
   }
 
@@ -139,19 +185,29 @@ function parseQuick(text, today) {
     });
   }
   if (!out.due) {
-    /* A weekday only counts where it is being used as one: after "on", or as
-       the last word. "the Monday Club" is a name, not a date. */
-    cut(new RegExp(LEAD + '(?:' + PREP + '(' + Object.keys(DAYS).join('|') + ')|(' + Object.keys(DAYS).join('|') + ')\\s*$)', 'i'), (all, pre, a, b) => {
+    /* "this friday" is the next Friday counting today; "next friday" is the
+       next one strictly after today. Both words belong to the date. */
+    cut(new RegExp(LEAD + '(?:' + PREP + ')?(next|this)\\s+(' + FULL_DAYS.join('|') + ')\\b', 'i'), (all, pre, which, name) => {
+      const from = which.toLowerCase() === 'next' ? D.addDays(day, 1) : day;
+      out.due = nextDow(from, DAYS[name.toLowerCase()]);
+    });
+  }
+  if (!out.due) {
+    /* A weekday only counts where it is being used as one: after "on" (short
+       forms fine), or as the last word (full name only — "Dog sat" and "Hang
+       washing in the sun" are not appointments). "the Monday Club" is a name. */
+    cut(new RegExp(LEAD + '(?:' + PREP + '(' + Object.keys(DAYS).join('|') + ')\\b|(' + FULL_DAYS.join('|') + ')\\s*$)', 'i'), (all, pre, a, b) => {
       const name = String(a || b).toLowerCase();
       out.due = nextDow(day, DAYS[name]);
     });
   }
 
   /* A repeat with no date of its own starts at its first occurrence. */
-  if (!out.due && out.repeat) {
-    const r = R.parse(out.repeat);
-    out.due = r && r.kind === 'dayOfWeek' ? nextDow(day, r.day) : day;
-  }
+  if (!out.due && out.repeat) out.due = firstOccurrence(out.repeat, day);
+
+  /* A time with no date would be a reminder in Someday that never alerts:
+     give it today if that time is still ahead, else tomorrow. */
+  if (!out.due && out.time) out.due = out.time > clock ? day : D.addDays(day, 1);
 
   out.title = squash(s).replace(/\s+(at|on|by|due)$/i, '').trim();
   return out;

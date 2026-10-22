@@ -6,8 +6,8 @@ const assert = require('node:assert');
 const I = require('../src/ics');
 
 const items = [
-  { title: "Sign papers for mom's medical aid", due: '2026-09-20', time: '', priority: 'high', done: false, tags: ['#family'], group: 'Family' },
-  { title: 'Phone the doctor; ask about the referral, please', due: '2026-09-21', time: '09:30', priority: 'normal', done: false, tags: [], group: 'Family' },
+  { title: "Sign the school's permission slip", due: '2026-09-20', time: '', priority: 'high', done: false, tags: ['#family'], group: 'Home' },
+  { title: 'Phone the plumber; ask about the quote, please', due: '2026-09-21', time: '09:30', priority: 'normal', done: false, tags: [], group: 'Home' },
   { title: 'Already done', due: '2026-09-01', done: true, doneDate: '2026-09-01', tags: [] },
   { title: 'No date', due: '', done: false, tags: [] },
 ];
@@ -39,7 +39,7 @@ assert.ok(ics.includes('TRIGGER:-PT10M'));
 assert.ok(ics.includes('BEGIN:VALARM') && ics.includes('ACTION:DISPLAY'));
 
 /* Escaping: a semicolon or comma in a summary must not split the property. */
-const summary = lines.find(l => l.startsWith('SUMMARY:Phone the doctor'));
+const summary = lines.find(l => l.startsWith('SUMMARY:Phone the plumber'));
 assert.ok(summary, 'the summary is a single unfolded line here');
 assert.ok(summary.includes('\;') && summary.includes('\\,'), 'semicolons and commas are escaped');
 
@@ -71,4 +71,24 @@ assert.strictEqual(uids.length, 2);
 assert.notStrictEqual(uids[0], uids[1], 'twins get their own events');
 assert.strictEqual(uids[0], 'UID:' + I.uidFor({ title: 'Take pills', group: 'Health' }), 'and the first keeps the UID it always had');
 assert.ok(I.buildICS([{ title: 'x', due: '2026-10-01', time: '09:00', tags: [] }], { alarmMinutes: 'abc' }).includes('TRIGGER:-PT10M'), 'a bad alarm setting falls back to 10 minutes');
+
+/* The all-day alarm hour is read by dates.parseClock, the same reader the
+   in-app notices use, with the same 09:00 fallback. */
+const triggerFor = setting => I.buildICS([{ title: 'x', due: '2026-10-01', tags: [] }], { allDayAlarmTime: setting }).split('\r\n').filter(l => l.startsWith('TRIGGER'))[0];
+for (const [setting, want] of [
+  ['7:30', 'PT7H30M'], ['07:30', 'PT7H30M'], ['8am', 'PT8H'], ['9pm', 'PT21H'], ['21h00', 'PT21H'],
+  ['09:00', 'PT9H'], ['banana', 'PT9H'], ['', 'PT9H'], ['00:00', 'PT0M'], ['12am', 'PT0M'],
+]) assert.strictEqual(triggerFor(setting), 'TRIGGER;RELATED=START:' + want, `"${setting}" -> ${want}`);
+
+/* Twin numbering counts every twin, ticked or not — ticking the 08:00 copy of a
+   pair must not hand its UID to the 20:00 copy (the phone would update the
+   wrong event and leave the ticked one behind). */
+const pill = (time, done) => ({ title: 'Take pills', group: 'Health', due: '2026-10-01', time, done: !!done, tags: [] });
+const uidsOf = list => I.buildICS(list, { now: '2026-10-01T05:00:00Z' }).split('\r\n').filter(l => l.startsWith('UID:'));
+const both = uidsOf([pill('08:00'), pill('20:00')]);
+const morningTicked = uidsOf([pill('08:00', true), pill('20:00')]);
+assert.deepStrictEqual(morningTicked, [both[1]], 'the evening copy keeps the UID it had while the morning one was open');
+assert.strictEqual(both[1], 'UID:' + I.uidFor({ title: 'Take pills', group: 'Health' }, 2));
+const undatedFirst = uidsOf([{ ...pill('08:00'), due: '' }, pill('20:00')]);
+assert.deepStrictEqual(undatedFirst, [both[1]], 'nor does giving the first twin no date');
 console.log('ics OK');

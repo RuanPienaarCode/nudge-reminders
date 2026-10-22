@@ -24,6 +24,7 @@ const SECTIONS = [
   { key: 'later', label: 'Later' },
   { key: 'someday', label: 'Someday' },
 ];
+const DONE_PREVIEW = 20;
 const FOR_FILTER = { overdue: ['overdue'], today: ['overdue', 'today'], week: ['overdue', 'today', 'tomorrow', 'week'], someday: ['someday'], done: ['done'] };
 
 function greeting(name) {
@@ -78,7 +79,7 @@ function mountBoard(view) {
     nodes.sub = el(ht, 'div', 'nd-sub', '');
     const hr = el(head, 'div', 'nd-head-right');
     nodes.count = el(hr, 'div', 'nd-count');
-    el(hr, 'div', 'nd-date', D.shortDate(state.today, state.today));
+    nodes.date = el(hr, 'div', 'nd-date', D.shortDate(state.today, state.today));
 
     /* quick add */
     const add = el(page, 'div', 'nd-add nd-glass');
@@ -88,10 +89,13 @@ function mountBoard(view) {
     const narrow = document.body && document.body.classList.contains('is-mobile');
     nodes.addInput = input(add, 'nd-add-input', {
       type: 'text',
-      placeholder: narrow ? 'Add a reminder…' : 'Sign papers for mom tomorrow at 9am !high #family',
+      placeholder: narrow ? 'Add a reminder…' : 'Renew the car licence tomorrow at 9am !high #admin',
       'aria-label': 'Add a reminder',
     });
     nodes.addHint = el(add, 'div', 'nd-add-hint');
+    /* What the parser understood, announced as it changes. */
+    nodes.addHint.setAttribute('aria-live', 'polite');
+    nodes.addHint.setAttribute('aria-atomic', 'true');
     button(add, 'nd-add-go', 'Add', () => commitQuickAdd(), null, 'Add this reminder');
 
     nodes.addInput.addEventListener('input', () => renderHint());
@@ -152,18 +156,63 @@ function mountBoard(view) {
     applySide();
   }
 
+  /* ---- keyboard focus across a rebuild ---------------------------------- */
+
+  /* Every rebuild replaces the node that holds keyboard focus, and focus
+     falls to <body>. Focusable nodes carry a stable data-key; before a
+     rebuild we note which one has focus, afterwards we put it back. A row
+     that has gone hands focus to the row that took its place. */
+  function keyed(node, key, kind) {
+    node.setAttribute('data-key', key);
+    if (kind) node.setAttribute('data-kind', kind);
+    return node;
+  }
+
+  function focusInfo(node) {
+    const a = node || document.activeElement;
+    if (!a || !a.getAttribute || !root.contains(a)) return null;
+    const key = a.getAttribute('data-key');
+    if (!key) return null;
+    const row = a.closest ? a.closest('.nd-row') : null;
+    const rowIndex = row && nodes.list ? Array.prototype.indexOf.call(nodes.list.querySelectorAll('.nd-row'), row) : -1;
+    return { key, kind: a.getAttribute('data-kind') || '', rowIndex };
+  }
+
+  function refocus(info) {
+    if (!info) return;
+    const put = n => { if (n && n.focus) { try { n.focus({ preventScroll: true }); } catch (e) { n.focus(); } } return !!n; };
+    const all = Array.prototype.slice.call(root.querySelectorAll('[data-key]'));
+    if (put(all.find(n => n.getAttribute('data-key') === info.key))) return;
+    if (info.rowIndex >= 0) {
+      const rows = root.querySelectorAll('.nd-row');
+      if (rows.length) {
+        const r = rows[Math.min(info.rowIndex, rows.length - 1)];
+        if (put(r.querySelector('[data-kind="' + info.kind + '"]') || r.querySelector('[data-kind="check"]'))) return;
+      }
+    }
+    put(root.querySelector('.nd-chip'));
+  }
+
+  /* Run a rebuild without losing the user's place. `hint` stands in for the
+     focus a closed menu has already taken away (focus is on <body> then). */
+  function rebuild(fn, hint) {
+    const a = document.activeElement;
+    const info = focusInfo() || (!a || a === document.body ? hint || null : null);
+    fn();
+    refocus(info);
+  }
+
   function pick(filter, group) {
     state.filter = filter;
     state.group = group;
     state.drawer = false;
     applySide();
-    renderSide();
-    renderChips();
-    renderList();
+    rebuild(() => { renderSide(); renderChips(); renderList(); });
   }
 
-  function sideItem(parent, label, iconName, n, on, onClick) {
+  function sideItem(parent, label, iconName, n, on, onClick, key) {
     const b = button(parent, 'nd-side-item' + (on ? ' is-on' : ''), label, onClick, iconName);
+    keyed(b, key, 'side');
     b.setAttribute('aria-current', on ? 'true' : 'false');
     el(b, 'span', 'nd-side-n', n ? n : '');
     return b;
@@ -176,13 +225,13 @@ function mountBoard(view) {
     const n = M.viewCounts(b);
     const views = el(side, 'nav', 'nd-side-group');
     for (const f of FILTERS) {
-      sideItem(views, f.label, f.icon, n[f.key], !state.group && state.filter === f.key, () => pick(f.key, ''));
+      sideItem(views, f.label, f.icon, n[f.key], !state.group && state.filter === f.key, () => pick(f.key, ''), 'side:' + f.key);
     }
 
     el(side, 'div', 'nd-side-label', 'Lists');
     const lists = el(side, 'nav', 'nd-side-group');
     for (const l of M.listCounts(state.items, state.lists)) {
-      sideItem(lists, l.name, l.name === 'Inbox' ? 'inbox' : 'list', l.open, state.group === l.name, () => pick('all', l.name));
+      sideItem(lists, l.name, l.name === 'Inbox' ? 'inbox' : 'list', l.open, state.group === l.name, () => pick('all', l.name), 'list:' + l.name);
     }
 
     if (state.naming) {
@@ -208,37 +257,44 @@ function mountBoard(view) {
       inp.addEventListener('blur', () => finish(true));
       setTimeout(() => inp.focus(), 0);
     } else {
-      button(side, 'nd-side-item nd-side-add', 'New list', () => { state.naming = true; renderSide(); }, 'folder-plus');
+      keyed(button(side, 'nd-side-item nd-side-add', 'New list', () => { state.naming = true; renderSide(); }, 'folder-plus'), 'side-new', 'side');
     }
   }
 
   /* ---- data ----------------------------------------------------------- */
 
-  async function reload() {
+  async function reload(hint) {
     const r = await store.load();
     state.items = r.items;
     state.groups = r.groups;
     state.lists = r.lists || r.groups;
     /* The list on screen was renamed or removed in the note. */
     if (state.group && state.lists.indexOf(state.group) === -1) state.group = '';
+    /* The tag on screen no longer sits on any reminder (its last carrier was
+       edited or deleted): its chip is gone, so the filter must go with it. */
+    if (state.tag && !state.items.some(i => (i.tags || []).indexOf(state.tag) !== -1)) state.tag = '';
     state.today = D.todayISO();
     state.loaded = true;
-    renderAll();
+    renderAll(hint && hint.key ? hint : null);
   }
 
   /* ---- render --------------------------------------------------------- */
 
-  function renderAll() {
-    renderSide();
-    renderChips();
-    renderTags();
-    renderHeader();
-    renderList();
+  function renderAll(hint) {
+    rebuild(() => {
+      renderSide();
+      renderChips();
+      renderTags();
+      renderHeader();
+      renderList();
+    }, hint);
   }
 
   function renderHeader() {
     const b = M.board(state.items, state.today);
     nodes.greet.textContent = greeting(plugin.settings.name);
+    /* The day can turn over while the board is open. */
+    if (nodes.date) nodes.date.textContent = D.shortDate(state.today, state.today);
     nodes.sub.textContent = M.summary(b);
     clear(nodes.count);
     const n = b.counts.due;
@@ -252,7 +308,10 @@ function mountBoard(view) {
     clear(nodes.chips);
     const n = M.viewCounts(M.board(state.items, state.today));
     for (const f of FILTERS) {
-      const c = button(nodes.chips, 'nd-chip' + (!state.group && state.filter === f.key ? ' is-on' : ''), f.label, () => pick(f.key, ''), f.icon);
+      const on = !state.group && state.filter === f.key;
+      const c = button(nodes.chips, 'nd-chip' + (on ? ' is-on' : ''), f.label, () => pick(f.key, ''), f.icon);
+      keyed(c, 'chip:' + f.key, 'chip');
+      c.setAttribute('aria-pressed', on ? 'true' : 'false');
       if (n[f.key]) el(c, 'span', 'nd-chip-n', n[f.key]);
     }
   }
@@ -262,10 +321,18 @@ function mountBoard(view) {
     const tags = M.tagsOf(state.items);
     if (!tags.length) { nodes.tags.classList.add('is-hidden'); return; }
     nodes.tags.classList.remove('is-hidden');
-    for (const t of tags.slice(0, 12)) {
-      button(nodes.tags, 'nd-tag' + (state.tag === t ? ' is-on' : ''), t, () => {
-        state.tag = state.tag === t ? '' : t; renderTags(); renderList();
+    /* Only the twelve busiest tags get a chip — but the one filtering the
+       board always does, or there would be no way to switch it off. */
+    const shown = tags.slice(0, 12);
+    if (state.tag && shown.indexOf(state.tag) === -1) shown.push(state.tag);
+    for (const t of shown) {
+      const on = state.tag === t;
+      const b = button(nodes.tags, 'nd-tag' + (on ? ' is-on' : ''), t, () => {
+        state.tag = state.tag === t ? '' : t;
+        rebuild(() => { renderTags(); renderList(); });
       });
+      keyed(b, 'tag:' + t, 'tag');
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
   }
 
@@ -310,10 +377,13 @@ function mountBoard(view) {
     if (state.filter === 'all' && plugin.settings.showDone && b.done.length) {
       const sec = el(nodes.list, 'section', 'nd-sec is-muted');
       const h = el(sec, 'div', 'nd-sec-head');
+      const part = b.done.slice(0, DONE_PREVIEW);
       el(h, 'span', 'nd-sec-title', 'Done');
-      el(h, 'span', 'nd-sec-n', b.done.length);
+      el(h, 'span', 'nd-sec-n', part.length < b.done.length ? `${part.length} of ${b.done.length}` : b.done.length);
+      /* Twenty rows are all this section shows; the rest are one click away. */
+      if (part.length < b.done.length) keyed(button(h, 'nd-link nd-sec-more', `Show all ${b.done.length}`, () => pick('done', ''), null, 'Show every ticked-off reminder'), 'done-more', 'more');
       const rows = el(sec, 'div', 'nd-rows');
-      for (const it of b.done.slice(0, 20)) renderRow(rows, it);
+      for (const it of part) renderRow(rows, it);
       shown += b.done.length;
     }
 
@@ -327,7 +397,7 @@ function mountBoard(view) {
     if (!state.group) return;
     icon(nodes.listHead, state.group === 'Inbox' ? 'inbox' : 'list', 'nd-list-head-icon');
     el(nodes.listHead, 'h2', 'nd-list-title', state.group);
-    button(nodes.listHead, 'nd-list-clear', 'All reminders', () => pick('all', ''), 'x', 'Back to every reminder');
+    keyed(button(nodes.listHead, 'nd-list-clear', 'All reminders', () => pick('all', ''), 'x', 'Back to every reminder'), 'list-clear', 'clear');
   }
 
   function renderEmpty() {
@@ -347,7 +417,7 @@ function mountBoard(view) {
     if (!state.items.length) {
       icon(e, 'bell', 'nd-empty-icon');
       el(e, 'div', 'nd-empty-title', 'Nothing on the list yet');
-      el(e, 'div', 'nd-empty-sub', 'Type what you must not forget in the box above — "Sign papers for mom tomorrow at 9am".');
+      el(e, 'div', 'nd-empty-sub', 'Type what you must not forget in the box above — "Renew the car licence tomorrow at 9am".');
       return;
     }
     icon(e, 'check', 'nd-empty-icon');
@@ -361,11 +431,13 @@ function mountBoard(view) {
     row.setAttribute('data-priority', it.priority || 'normal');
 
     const check = button(row, 'nd-check', '', () => tick(it, row), null, it.done ? 'Mark as not done' : 'Mark as done');
+    keyed(check, 'row-check:' + it.line, 'check');
     check.setAttribute('aria-pressed', it.done ? 'true' : 'false');
     icon(check, 'check', 'nd-check-mark');
 
     const main = el(row, 'div', 'nd-row-main');
     const title = button(main, 'nd-row-title', it.title || '(untitled)', () => edit(it), null, 'Edit this reminder');
+    keyed(title, 'row-title:' + it.line, 'title');
     if (it.done) title.classList.add('is-done');
 
     const meta = el(main, 'div', 'nd-row-meta');
@@ -382,72 +454,124 @@ function mountBoard(view) {
     if (it.done && it.doneDate) el(meta, 'span', 'nd-pill nd-donepill', `Done ${D.relative(it.doneDate, state.today).toLowerCase()}`);
 
     const acts = el(row, 'div', 'nd-row-acts');
-    if (!it.done) button(acts, 'nd-act', '', e => snoozeMenu(it, e), 'alarm-clock', 'Snooze');
-    button(acts, 'nd-act', '', e => rowMenu(it, e), 'more-horizontal', 'More');
+    if (!it.done) keyed(button(acts, 'nd-act', '', e => snoozeMenu(it, e), 'alarm-clock', 'Snooze'), 'row-snooze:' + it.line, 'snooze');
+    keyed(button(acts, 'nd-act', '', e => rowMenu(it, e), 'more-horizontal', 'More'), 'row-more:' + it.line, 'more');
     return row;
   }
 
   /* ---- actions --------------------------------------------------------- */
+
+  /* Reminders with a write in flight. A second click on the same row (a
+     double-click, a held Enter) would otherwise act on the stale copy and,
+     for a repeating reminder, complete two occurrences. The rows are rebuilt
+     from a fresh read when the write is done, so a later click gets a new
+     object and is let through. */
+  const pending = new WeakSet();
+  async function once(it, fn) {
+    if (pending.has(it)) return undefined;
+    pending.add(it);
+    try { return await fn(); } finally { pending.delete(it); }
+  }
+
+  /* A write that found nothing to change — the line moved or went in the note
+     while the board was open. Said aloud, because the change would otherwise
+     just vanish. */
+  function gone(r, what) {
+    if (!r || r.ok !== false) return false;
+    new Notice(`Nudge: that reminder has moved or gone from the note (or could not be read), so ${what}.`);
+    return true;
+  }
 
   async function commitQuickAdd() {
     const raw = nodes.addInput.value.trim();
     if (!raw) return;
     const q = parseQuick(raw, state.today);
     if (!q.title) { new Notice('Nudge: give the reminder something to say.'); return; }
-    await store.add({
-      title: q.title, due: q.due, time: q.time, priority: q.priority,
-      repeat: q.repeat, tags: q.tags, group: state.group || plugin.settings.defaultGroup || '',
-    });
+    /* Emptied BEFORE the write: a second Enter or click while it is in flight
+       finds nothing to add instead of adding the same reminder again. */
+    const typed = nodes.addInput.value;
     nodes.addInput.value = '';
     renderHint();
+    let r;
+    try {
+      r = await store.add({
+        title: q.title, due: q.due, time: q.time, priority: q.priority,
+        repeat: q.repeat, tags: q.tags, group: state.group || plugin.settings.defaultGroup || '',
+      });
+    } catch (e) {
+      console.error('nudge add', e);
+      r = { ok: false };
+    }
+    if (r && r.ok === false) {
+      /* Give the text back, unless the user has already started another. */
+      if (!nodes.addInput.value) { nodes.addInput.value = typed; renderHint(); }
+      new Notice('Nudge: that reminder could not be added — nothing was written.');
+      return;
+    }
     await reload();
     await maybeExport();
   }
 
-  async function tick(it, row) {
-    row.classList.add(it.done ? 'is-unticking' : 'is-ticking');
-    const r = await store.toggle(it, D.todayISO());
-    if (!r.ok) { new Notice(tickRefused(r)); await reload(); return; }
-    if (r.rolled) new Notice(`Nudge: next one ${D.relative(r.rolled.due, state.today).toLowerCase()}.`);
-    await reload();
-    await maybeExport();
+  function tick(it, row) {
+    return once(it, async () => {
+      row.classList.add(it.done ? 'is-unticking' : 'is-ticking');
+      row.setAttribute('aria-busy', 'true');
+      const r = await store.toggle(it, D.todayISO());
+      if (!r.ok) { new Notice(tickRefused(r)); await reload(); return; }
+      if (r.rolled) new Notice(`Nudge: next one ${D.relative(r.rolled.due, state.today).toLowerCase()}.`);
+      await reload();
+      await maybeExport();
+    });
   }
 
   /* Why a tick didn't happen. A repeat we can't read is left open on
      purpose — ticking it would end the series without a word. */
   function tickRefused(r) {
     if (r && r.reason === 'repeat') return `Nudge: can't work out when "🔁 ${r.repeat}" comes round next, so it was left open. Edit the repeat, or tick it off in the note.`;
+    /* The line was only found by its look-alike on a repeating reminder: the
+       board was out of date, so ticking could have closed the wrong occurrence. */
+    if (r && r.reason === 'stale') return 'Nudge: that reminder changed since the board last read the note, so nothing was ticked. Here it is as it stands now.';
     return 'Nudge: that line is no longer in the note.';
   }
 
+  /* A menu steals focus and gives it back to nobody: remember where it came
+     from so the rebuild after its action can put focus there. */
+  function openedFrom(e) {
+    return focusInfo(e && e.currentTarget) || focusInfo();
+  }
+
   function snoozeMenu(it, e) {
+    const from = openedFrom(e);
     const m = new Menu();
     for (const s of SNOOZE) {
-      m.addItem(i => i.setTitle(s.label).setIcon('alarm-clock').onClick(async () => {
-        await store.snooze(it, s.days, D.todayISO());
-        await reload();
+      m.addItem(i => i.setTitle(s.label).setIcon('alarm-clock').onClick(() => once(it, async () => {
+        const r = await store.snooze(it, s.days, D.todayISO());
+        gone(r, 'it was not snoozed');
+        await reload(from);
         await maybeExport();
-      }));
+      })));
     }
     m.addItem(i => i.setTitle('Pick a date…').setIcon('calendar-days').onClick(() => edit(it)));
     showMenu(m, e);
   }
 
   function rowMenu(it, e) {
+    const from = openedFrom(e);
     const m = new Menu();
     m.addItem(i => i.setTitle('Edit').setIcon('pencil').onClick(() => edit(it)));
-    m.addItem(i => i.setTitle(it.done ? 'Mark as not done' : 'Mark as done').setIcon('check').onClick(async () => {
+    m.addItem(i => i.setTitle(it.done ? 'Mark as not done' : 'Mark as done').setIcon('check').onClick(() => once(it, async () => {
       const r = await store.toggle(it, D.todayISO());
       if (!r.ok) new Notice(tickRefused(r));
-      await reload(); await maybeExport();
-    }));
+      await reload(from); await maybeExport();
+    })));
     m.addItem(i => i.setTitle('Open in the note').setIcon('pencil').onClick(() => openNote(it)));
-    m.addItem(i => i.setTitle('Delete').setIcon('trash-2').onClick(async () => {
+    m.addItem(i => i.setTitle('Delete').setIcon('trash-2').onClick(() => once(it, async () => {
       const r = await store.remove(it);
-      if (r.ok) new Notice(`Nudge: removed "${it.title}".`);
-      await reload();
+      if (r && r.ok === false) gone(r, 'nothing was deleted');
+      else new Notice(`Nudge: removed "${it.title}".`);
+      await reload(from);
       await maybeExport();
-    }));
+    })));
     showMenu(m, e);
   }
 
@@ -461,8 +585,16 @@ function mountBoard(view) {
       item: it,
       groups: state.groups,
       today: state.today,
-      onSave: async fields => { await store.update(it, fields); await reload(); await maybeExport(); },
-      onDelete: async () => { await store.remove(it); await reload(); await maybeExport(); },
+      onSave: fields => once(it, async () => {
+        const r = await store.update(it, fields);
+        gone(r, 'your changes were not saved');
+        await reload(); await maybeExport();
+      }),
+      onDelete: () => once(it, async () => {
+        const r = await store.remove(it);
+        gone(r, 'nothing was deleted');
+        await reload(); await maybeExport();
+      }),
     });
   }
 
@@ -472,7 +604,11 @@ function mountBoard(view) {
       groups: state.groups,
       today: state.today,
       isNew: true,
-      onSave: async fields => { await store.add(fields); await reload(); await maybeExport(); },
+      onSave: async fields => {
+        const r = await store.add(fields);
+        if (r && r.ok === false) { new Notice('Nudge: that reminder could not be added — nothing was written.'); return; }
+        await reload(); await maybeExport();
+      },
     });
   }
 

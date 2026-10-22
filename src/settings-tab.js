@@ -2,6 +2,7 @@
 
 const { PluginSettingTab, Setting, Notice } = require('obsidian');
 const { TINTS, MODES } = require('./constants');
+const D = require('./dates');
 
 class NudgeSettingTab extends PluginSettingTab {
   constructor(app, plugin) { super(app, plugin); this.plugin = plugin; }
@@ -12,8 +13,6 @@ class NudgeSettingTab extends PluginSettingTab {
     const s = this.plugin.settings;
     const save = async () => { await this.plugin.saveSettings(); this.plugin.refreshViews(); };
 
-    new Setting(c).setName('The note').setHeading();
-
     new Setting(c)
       .setName('Reminders note')
       .setDesc('Every reminder is a checkbox line in this one note. Plain markdown, so the Tasks plugin and a grep read the same file.')
@@ -22,7 +21,7 @@ class NudgeSettingTab extends PluginSettingTab {
     new Setting(c)
       .setName('Default group')
       .setDesc('New reminders land under this heading unless you give them another. Leave empty to add them at the end.')
-      .addText(t => t.setPlaceholder('Family').setValue(s.defaultGroup).onChange(async v => { s.defaultGroup = String(v || '').trim(); await save(); }));
+      .addText(t => t.setPlaceholder('Home').setValue(s.defaultGroup).onChange(async v => { s.defaultGroup = String(v || '').trim(); await save(); }));
 
     new Setting(c)
       .setName('Show what is done')
@@ -36,10 +35,31 @@ class NudgeSettingTab extends PluginSettingTab {
       .setDesc('A notice when something falls due. Obsidian can only do this while it is open — the calendar file below is what reaches a locked phone.')
       .addToggle(t => t.setValue(s.notify).onChange(async v => { s.notify = v; await save(); }));
 
-    new Setting(c)
-      .setName('Daily hour')
-      .setDesc('When reminders with no time of their own — and anything overdue — are raised.')
-      .addText(t => t.setPlaceholder('09:00').setValue(s.allDayAlarmTime).onChange(async v => { s.allDayAlarmTime = String(v || '').trim() || '09:00'; await save(); }));
+    /* The hour is stored as HH:MM, however it was typed (7:30, 8am, 21h00),
+       because notices and the phone alarm both read it with D.parseClock. If
+       what is typed cannot be read, the stored hour is left alone and the
+       description says so — silently keeping or replacing it would leave the
+       two out of step again. */
+    const hourDesc = 'When reminders with no time of their own — and anything overdue — are raised. Write it like 09:00, 7:30, 8am or 9pm.';
+    const hourSetting = new Setting(c).setName('Daily hour').setDesc(hourDesc);
+    hourSetting.addText(t => {
+      t.setPlaceholder('09:00').setValue(s.allDayAlarmTime).onChange(async v => {
+        const typed = String(v || '').trim();
+        const hhmm = typed ? D.parseClock(typed) : '09:00';
+        if (!hhmm) {
+          hourSetting.setDesc(`${hourDesc} Not understood, so ${D.parseClock(s.allDayAlarmTime) || '09:00'} stays in use.`);
+          return;
+        }
+        hourSetting.setDesc(hourDesc);
+        s.allDayAlarmTime = hhmm;
+        await save();
+      });
+      /* Leaving the box tidies what was typed into the form that is stored. */
+      t.inputEl.addEventListener('blur', () => {
+        t.setValue(D.parseClock(s.allDayAlarmTime) || '09:00');
+        hourSetting.setDesc(hourDesc);
+      });
+    });
 
     new Setting(c)
       .setName('Warning before a timed reminder')
@@ -111,7 +131,7 @@ class NudgeSettingTab extends PluginSettingTab {
     new Setting(c)
       .setName('Your name')
       .setDesc('Used in the greeting. Leave it empty for none.')
-      .addText(t => t.setPlaceholder('Ruan').setValue(s.name).onChange(async v => { s.name = String(v || '').trim(); await save(); }));
+      .addText(t => t.setPlaceholder('Sam').setValue(s.name).onChange(async v => { s.name = String(v || '').trim(); await save(); }));
 
     new Setting(c)
       .setName('Open on startup')

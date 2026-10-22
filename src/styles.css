@@ -23,7 +23,7 @@
 .nd-app {
   --nd-ink: #ffffff;
   --nd-dim: rgba(255, 255, 255, 0.72);
-  --nd-faint: rgba(255, 255, 255, 0.46);
+  --nd-faint: rgba(255, 255, 255, 0.54);
   --nd-ghost: rgba(255, 255, 255, 0.28);
   --nd-glass: rgba(255, 255, 255, 0.065);
   --nd-glass-2: rgba(255, 255, 255, 0.11);
@@ -57,6 +57,7 @@
   --nd-blur: 22px;
   --nd-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', Roboto, 'Helvetica Neue', Helvetica, Arial, sans-serif;
 
+  color-scheme: dark;
   position: relative;
   height: 100%;
   overflow: hidden;
@@ -82,7 +83,7 @@
 .nd-app.is-light {
   --nd-ink: #14161c;
   --nd-dim: rgba(20, 22, 28, 0.72);
-  --nd-faint: rgba(20, 22, 28, 0.52);
+  --nd-faint: rgba(20, 22, 28, 0.64);
   --nd-ghost: rgba(20, 22, 28, 0.34);
   --nd-glass: rgba(255, 255, 255, 0.52);
   --nd-glass-2: rgba(255, 255, 255, 0.72);
@@ -92,13 +93,13 @@
   --nd-shine: rgba(255, 255, 255, 0.85);
   --nd-shadow: 0 10px 34px rgba(30, 36, 60, 0.1);
   --nd-ground: #f3f2f7;
-  --nd-late: #c73a22;
+  --nd-late: #b8321c;
   --nd-late-soft: rgba(230, 90, 60, 0.11);
   --nd-late-line: rgba(199, 58, 34, 0.3);
   --nd-late-rim: rgba(199, 58, 34, 0.22);
   --nd-late-ring: rgba(199, 58, 34, 0.55);
   --nd-warn: #c98100;
-  --nd-ok: #1f9d62;
+  --nd-ok: #14774a;
   --nd-ok-ink: #ffffff;
   --nd-accent: #2563c9;
   --nd-go-hover: #ffffff;
@@ -145,9 +146,20 @@
 .nd-app.is-plain .nd-bg, .nd-app.is-plain .nd-veil { display: none; }
 
 .workspace-leaf-content .view-content.nd-app { padding: 0; overflow: hidden; background: var(--nd-ground); color: var(--nd-ink); }
+/* Fill the leaf, not the viewport. Obsidian's leaf content is a flex column and
+   on a phone pushes .view-content down with margin-top (--view-top-spacing),
+   so height:100% overflows by exactly that margin. A flex item with
+   flex-basis 0 ignores its height entirely and takes what is left; the
+   height:100% stays only as the fallback for a parent that is not a flex
+   column (the browser preview). */
+.workspace-leaf-content .view-content.nd-app { height: 100%; flex: 1 1 0; min-height: 0; }
 
 .nd-app * { box-sizing: border-box; }
-.nd-app .is-hidden { display: none !important; }
+/* Wins on specificity, with no forcing flag: the second selector is (0,3,0), above
+   every display rule on an element that carries is-hidden (.nd-tags,
+   .nd-list-head — both (0,2,0) — are the ones board.js toggles). */
+.nd-app .is-hidden,
+.nd-app .nd-page .is-hidden { display: none; }
 .nd-app .nd-spacer { flex: 1 1 auto; }
 .nd-app .nd-icon { display: inline-flex; width: 17px; height: 17px; align-items: center; justify-content: center; flex: none; }
 .nd-app .nd-icon svg { width: 17px; height: 17px; display: block; }
@@ -271,7 +283,7 @@
   flex: 1 1 auto; min-width: 0; height: 30px; padding: 0; background: transparent; border: 0;
   box-shadow: none; border-radius: 0; outline: none; color: var(--nd-ink); font: inherit; font-size: 14px;
 }
-.nd-app .nd-side-input::placeholder { color: var(--nd-ghost); }
+.nd-app .nd-side-input::placeholder { color: var(--nd-faint); }
 
 .nd-app .nd-head-line { display: flex; align-items: center; gap: 10px; }
 .nd-app .nd-page button.nd-side-toggle {
@@ -284,7 +296,11 @@
 .nd-app .nd-list-head { display: flex; align-items: center; gap: 10px; padding: 6px 4px 0; }
 .nd-app .nd-list-head-icon { color: var(--nd-accent); }
 .nd-app .nd-list-head-icon, .nd-app .nd-list-head-icon svg { width: 20px; height: 20px; }
-.nd-app .nd-list-title { margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -0.015em; color: var(--nd-ink); }
+.nd-app .nd-list-title {
+  margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -0.015em;
+  /* A theme's h2 rules (font, colour, style) must not reach the board. */
+  color: var(--nd-ink); font-family: var(--nd-font); font-style: normal; font-variant: normal; text-transform: none;
+}
 .nd-app .nd-page button.nd-list-clear {
   margin-left: auto; display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px;
   border-radius: 999px; font-size: 12.5px; color: var(--nd-faint);
@@ -295,7 +311,11 @@
 /* ---- header --------------------------------------------------------------- */
 
 .nd-app .nd-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 0 4px 2px; }
-.nd-app .nd-greet { margin: 0; font-size: 32px; font-weight: 600; letter-spacing: -0.022em; line-height: 1.1; text-shadow: var(--nd-lift); }
+.nd-app .nd-greet {
+  margin: 0; font-size: 32px; font-weight: 600; letter-spacing: -0.022em; line-height: 1.1; text-shadow: var(--nd-lift);
+  /* A theme's h1 rules (font, colour, style) must not reach the board. */
+  color: var(--nd-ink); font-family: var(--nd-font); font-style: normal; font-variant: normal; text-transform: none;
+}
 .nd-app .nd-sub { margin-top: 7px; font-size: 14px; color: var(--nd-dim); }
 .nd-app .nd-head-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .nd-app .nd-date { font-size: 12.5px; color: var(--nd-faint); letter-spacing: 0.02em; }
@@ -304,8 +324,13 @@
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 10px; border-radius: 999px; font-size: 12.5px; line-height: 1.2;
   background: var(--nd-glass-2); border: 1px solid var(--nd-line); color: var(--nd-dim);
-  white-space: nowrap;
+  white-space: nowrap; max-width: 100%; min-width: 0; overflow: hidden;
 }
+/* A long tag or list name ends in an ellipsis instead of pushing the row wider.
+   Pills that wrap an icon + label ellipsise the label span; the ones that are
+   bare text become a block so text-overflow applies to them directly. */
+.nd-app .nd-pill > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nd-app .nd-pill.nd-group, .nd-app .nd-pill.nd-tagpill { display: block; text-overflow: ellipsis; }
 .nd-app .nd-pill .nd-icon, .nd-app .nd-pill .nd-icon svg { width: 13px; height: 13px; }
 .nd-app .nd-pill-count { padding: 6px 13px; font-size: 13px; font-weight: 600; color: var(--nd-ink); }
 .nd-app .nd-pill-count.is-late { background: var(--nd-late-soft); border-color: var(--nd-late-line); color: var(--nd-late); }
@@ -328,7 +353,7 @@
 .nd-app .nd-search input[type="text"].nd-search-input {
   background: transparent; border: 0; box-shadow: none; border-radius: 0;
 }
-.nd-app .nd-add-input::placeholder { color: var(--nd-ghost); }
+.nd-app .nd-add-input::placeholder { color: var(--nd-faint); }
 .nd-app .nd-page button.nd-add-go {
   flex: none; padding: 9px 16px; border-radius: 12px; font-size: 14px; font-weight: 600;
   background: var(--nd-glass-3); border: 1px solid var(--nd-line-2); color: var(--nd-ink);
@@ -359,12 +384,22 @@
 .nd-app .nd-search { display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; border-radius: 999px; height: 36px; min-width: 200px; }
 .nd-app .nd-search-icon { color: var(--nd-faint); }
 .nd-app .nd-search-input { flex: 1 1 auto; min-width: 0; background: transparent; border: 0; outline: none; color: var(--nd-ink); font: inherit; font-size: 13.5px; height: 34px; }
-.nd-app .nd-search-input::placeholder { color: var(--nd-ghost); }
+.nd-app .nd-search-input::placeholder { color: var(--nd-faint); }
 .nd-app .nd-page button.nd-search-clear { display: inline-flex; padding: 5px; border-radius: 999px; color: var(--nd-faint); }
 .nd-app .nd-page button.nd-search-clear:hover { background: var(--nd-glass-2); color: var(--nd-ink); }
 
+/* The inputs drop their own outline (the glass pill is the field), so the pill
+   carries the focus cue. A ring in box-shadow follows the pill's radius on iOS
+   15, which an outline does not; the glass recipe's own shadows are kept. */
+.nd-app .nd-add:focus-within,
+.nd-app .nd-search:focus-within {
+  box-shadow: var(--nd-shadow), inset 0 1px 0 var(--nd-shine), 0 0 0 2px var(--nd-accent);
+}
+.nd-app .nd-side-new:focus-within { box-shadow: 0 0 0 2px var(--nd-accent); }
+
 .nd-app .nd-tags { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 2px; }
-.nd-app .nd-page button.nd-tag { padding: 3px 10px; border-radius: 999px; font-size: 12px; color: var(--nd-faint); }
+.nd-app .nd-page button.nd-tag { display: inline-flex; align-items: center; max-width: 100%; padding: 3px 10px; border-radius: 999px; font-size: 12px; color: var(--nd-faint); }
+.nd-app .nd-page button.nd-tag .nd-btn-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nd-app .nd-page button.nd-tag:hover { color: var(--nd-ink); }
 .nd-app .nd-page button.nd-tag.is-on { color: var(--nd-accent); border-color: var(--nd-accent); }
 
@@ -372,10 +407,9 @@
 
 .nd-app .nd-list { display: flex; flex-direction: column; gap: 24px; margin-top: 4px; }
 .nd-app .nd-sec { display: flex; flex-direction: column; gap: 8px; }
-.nd-app .nd-sec.is-muted { opacity: 0.62; }
 .nd-app .nd-sec-head { display: flex; align-items: baseline; gap: 8px; padding: 0 6px 2px; }
 .nd-app .nd-sec-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--nd-faint); }
-.nd-app .nd-sec-n { font-size: 11.5px; color: var(--nd-ghost); font-variant-numeric: tabular-nums; }
+.nd-app .nd-sec-n { font-size: 11.5px; color: var(--nd-faint); font-variant-numeric: tabular-nums; }
 .nd-app .nd-rows { display: flex; flex-direction: column; gap: 8px; }
 
 .nd-app .nd-row {
@@ -385,7 +419,11 @@
   animation: nd-rise 320ms ease both;
 }
 @keyframes nd-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.nd-app .nd-row:hover { background: var(--nd-glass-2); border-color: var(--nd-line-2); transform: translateY(-1px); }
+/* Hover effects only where there is a hover: on iOS a tap leaves :hover
+   stuck, so the row would stay lifted. */
+@media (hover: hover) {
+  .nd-app .nd-row:hover { background: var(--nd-glass-2); border-color: var(--nd-line-2); transform: translateY(-1px); }
+}
 
 /* Priority is a rim of light on the leading edge, not a badge to read. */
 .nd-app .nd-row::before {
@@ -398,15 +436,21 @@
 .nd-app .nd-row[data-priority="low"]::before,
 .nd-app .nd-row[data-priority="lowest"]::before { background: var(--nd-ghost); }
 .nd-app .nd-row.is-late { background: var(--nd-late-soft); border-color: var(--nd-late-rim); }
-.nd-app .nd-row.is-done { opacity: 0.5; }
+/* Done is shown by the tick, the strikethrough and a dimmed rim - never by
+   fading the row, which took the text under 2:1. */
+.nd-app .nd-row.is-done::before { opacity: 0.4; }
 .nd-app .nd-row.is-ticking { opacity: 0.35; transform: scale(0.995); }
+/* While a tick is being written the row ignores further taps; text keeps its colour. */
+.nd-app .nd-row[aria-busy="true"] { pointer-events: none; }
 
 .nd-app .nd-page button.nd-check {
   flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%;
   border: 1.6px solid var(--nd-line-2); display: inline-flex; align-items: center; justify-content: center;
   color: transparent; transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
 }
-.nd-app .nd-page button.nd-check:hover { border-color: var(--nd-ink); transform: scale(1.08); }
+@media (hover: hover) {
+  .nd-app .nd-page button.nd-check:hover { border-color: var(--nd-ink); transform: scale(1.08); }
+}
 .nd-app .nd-page button.nd-check .nd-icon, .nd-app .nd-page button.nd-check .nd-icon svg { width: 13px; height: 13px; }
 .nd-app .nd-row.is-done .nd-page button.nd-check,
 .nd-app .nd-page .nd-row.is-done button.nd-check { background: var(--nd-ok); border-color: var(--nd-ok); color: var(--nd-ok-ink); }
@@ -421,11 +465,16 @@
   display: block; width: 100%; text-align: left; justify-content: flex-start; white-space: normal;
 }
 .nd-app .nd-page button.nd-row-title:hover { color: var(--nd-accent); }
-.nd-app .nd-page button.nd-row-title.is-done { text-decoration: line-through; color: var(--nd-faint); }
+.nd-app .nd-page button.nd-row-title.is-done { text-decoration: line-through; color: var(--nd-dim); }
 .nd-app .nd-row-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .nd-app .nd-due.is-late { background: var(--nd-late-soft); border-color: var(--nd-late-line); color: var(--nd-late); }
 .nd-app .nd-due.is-today { color: var(--nd-ink); border-color: var(--nd-line-2); }
-.nd-app .nd-late-n { opacity: 0.75; }
+/* "3 days late" repeats "3 days ago" in other words. It earns its place
+   beside it on a wide row; on a phone row the meta column is ~140px, and
+   the two would ellipsise each other into "3 day… 3 day…". No opacity:
+   late text on its soft ground is already at the 4.5:1 floor. */
+.nd-app .nd-late-n { font-weight: 400; }
+.nd-app.is-narrow .nd-late-n { display: none; }
 .nd-app .nd-tagpill { color: var(--nd-accent); background: transparent; }
 .nd-app .nd-group { color: var(--nd-faint); background: transparent; }
 .nd-app .nd-donepill { color: var(--nd-ok); background: transparent; border-color: transparent; }
@@ -450,7 +499,13 @@
 .nd-app .nd-page button.nd-link { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--nd-faint); padding: 5px 8px; border-radius: 8px; }
 .nd-app .nd-page button.nd-link:hover { color: var(--nd-ink); background: var(--nd-glass-2); }
 .nd-app .nd-page button.nd-link .nd-icon, .nd-app .nd-page button.nd-link .nd-icon svg { width: 13px; height: 13px; }
-.nd-app .nd-foot-note { margin-left: auto; font-size: 11.5px; color: var(--nd-ghost); }
+/* "Show all N" inside the Done header: it also carries nd-link, so this
+   (0,3,1) rule, declared after it, turns the footer-link look into a small
+   underlined inline link pushed to the header's right edge. dim, not faint,
+   because it is text on the page ground. */
+.nd-app .nd-page button.nd-sec-more { margin-left: auto; padding: 0 4px; font-size: 12px; color: var(--nd-dim); text-decoration: underline; border-radius: 6px; }
+.nd-app .nd-page button.nd-sec-more:hover { color: var(--nd-ink); background: transparent; }
+.nd-app .nd-foot-note { margin-left: auto; font-size: 11.5px; color: var(--nd-faint); }
 
 /* ---- the editor ----------------------------------------------------------- */
 
@@ -501,7 +556,9 @@
   font-size: 9.5px; line-height: 15px; text-align: center; font-weight: 700;
   font-variant-numeric: tabular-nums; pointer-events: none;
 }
-.nd-badge.is-late { background: #e5484d; color: #fff; }
+.nd-badge.is-late { background: #c4262b; color: #fff; }
+/* The bell the badge sits on (main.js adds the class): the badge is absolute. */
+.nd-ribbon { position: relative; }
 
 /* ---- mobile ---------------------------------------------------------------- */
 
@@ -524,6 +581,11 @@
 .is-mobile .nd-app .nd-search { width: 100%; }
 .is-mobile .nd-app .nd-foot-note { display: none; }
 .is-mobile .nd-app .nd-side { -webkit-backdrop-filter: none; backdrop-filter: none; }
+/* Room for Obsidian's fixed bottom nav (about 48px) plus whatever bottom
+   spacing the app declares, on top of each side's own base padding (page 48,
+   drawer 24), so the last row and the footer links can scroll clear of it. */
+.is-mobile .nd-app .nd-page { padding-bottom: calc(96px + var(--view-bottom-spacing, 0px)); }
+.is-mobile .nd-app .nd-side { padding-bottom: calc(72px + var(--view-bottom-spacing, 0px)); }
 
 @media (max-width: 620px) {
   .nd-app .nd-page { padding: 26px 16px 48px; }
@@ -545,6 +607,30 @@
 .is-mobile .nd-app .nd-page button.nd-act,
 .is-mobile .nd-app .nd-page button.nd-side-toggle {
   display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px;
+}
+.is-mobile .nd-app .nd-page button.nd-chip,
+.is-mobile .nd-app .nd-page button.nd-add-go,
+.is-mobile .nd-app .nd-page button.nd-list-clear,
+.is-mobile .nd-app .nd-page button.nd-link,
+.is-mobile .nd-app .nd-side button.nd-side-item {
+  display: inline-flex; align-items: center; min-height: 44px;
+}
+.is-mobile .nd-app .nd-side button.nd-side-item { display: flex; }
+.is-mobile .nd-app .nd-page button.nd-add-go { justify-content: center; }
+/* The search pill grows to hold a 44px clear button instead of clipping it. */
+.is-mobile .nd-app .nd-search { height: auto; min-height: 44px; padding-right: 0; }
+.is-mobile .nd-app .nd-page button.nd-search-clear {
+  align-items: center; justify-content: center; min-width: 44px; min-height: 44px;
+}
+.is-mobile .nd-app .nd-side-new { min-height: 44px; }
+/* In the Done header the 44px target must not make the header 44px tall:
+   the negative margin gives the height back. */
+.is-mobile .nd-app .nd-page button.nd-sec-more { margin-top: -12px; margin-bottom: -12px; }
+/* Tags are small pills in a tight wrap: widen what they answer to the way the
+   tick does, sideways only a little so neighbours (6px gap) do not overlap much. */
+.is-mobile .nd-app .nd-page button.nd-tag { position: relative; }
+.is-mobile .nd-app .nd-page button.nd-tag::after {
+  content: ''; position: absolute; top: -11px; right: -3px; bottom: -11px; left: -3px; border-radius: 999px;
 }
 .is-mobile .nd-modal-shell .nd-modal button.nd-quickdate,
 .is-mobile .nd-modal-shell .nd-modal button.nd-seg-b,

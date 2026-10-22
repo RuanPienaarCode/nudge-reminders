@@ -4,7 +4,7 @@
    Every reminder is one Obsidian Tasks checkbox line in a plain note, so the
    Tasks plugin, a grep, a phone and a human all read the same file:
 
-     - [ ] Sign papers for mom's medical aid ⏰ 09:00 #family 📅 2026-09-20 ⏫ 🔁 every month
+     - [ ] Sign the school's permission slip ⏰ 09:00 #family 📅 2026-09-20 ⏫ 🔁 every month
 
    Tasks' emoji vocabulary is used as-is. ⏰ is the one addition (Tasks has no
    clock time); to Tasks it is simply part of the description — but ONLY while
@@ -14,11 +14,16 @@
    and the next save rewrites them into this order.
 
    Parsing is LOSSLESS by design: tokens this plugin never shows — 🛫 🆔 ⛔ —
-   are still read, held, and written back out. A reminder edited here must
+   are still read, held, and written back out (and 🏁, Tasks' On Completion
+   field, which would otherwise be swallowed into the 🔁 value). A reminder
+   edited here must
    never come back smaller than it went in. That includes the things that
    only LOOK like fields: a marker whose value doesn't parse (📅 tomorrow)
    stays in the title marker and all, and `code spans` and [[wikilinks]] are
-   masked before any marker is looked for, so a 📅 quoted inside one is text.
+   masked before any marker is looked for, so a 📅 quoted inside one is text
+   (as are %%comments%% and [text](links)). Where a single-value field turns
+   up twice, the LAST copy is the field — it is the one Tasks reads, peeling
+   from the end — and the earlier copy stays in the title, marker and all.
    A trailing ^block-id is held apart and always written last, because
    Obsidian only resolves it at the very end of the line. */
 
@@ -38,11 +43,17 @@ const HEADING_RE = /^#{1,6}[ \t]+(.+?)[ \t]*$/;
 const GROUP_RE = /^#{2,6}[ \t]+(.+?)[ \t]*$/;
 /* Splitting on the markers keeps them (capturing group), so a token's value
    is simply the text up to the next marker. */
-const MARKER_RE = /((?:🔺|⏫|🔼|🔽|⏬|📅|📆|🗓|⏰|✅|➕|🛫|⏳|⌛|🔁|🆔|⛔)\uFE0F?)/;
+const MARKER_RE = /((?:🔺|⏫|🔼|🔽|⏬|📅|📆|🗓|⏰|✅|➕|🛫|⏳|⌛|🔁|🏁|🆔|⛔)\uFE0F?)/;
 const MARKER_SPLIT = new RegExp(MARKER_RE.source, 'g');
 const DATE_HEAD = /^(\d{4}-\d{2}-\d{2})\s*([\s\S]*)$/;
 const TIME_HEAD = /^(\d{1,2}:\d{2})\s*([\s\S]*)$/;
 const WORD_HEAD = /^(\S+)\s*([\s\S]*)$/;
+/* Tasks' own pattern for what ⛔ may hold: ids separated by commas, with or
+   without spaces after them ("abc, def"). */
+const LIST_HEAD = /^([A-Za-z0-9_-]+(?:\s*,\s*[A-Za-z0-9_-]+)*)\s*([\s\S]*)$/;
+/* The only values Tasks accepts after 🏁. */
+const COMPLETION_HEAD = /^(delete|keep)(?![A-Za-z0-9])\s*([\s\S]*)$/i;
+const ANY_HEAD = /^([\s\S]+?)\s*$/;
 /* No lookbehind anywhere: iOS 15 WebKit throws on the literal and takes the
    whole bundle with it. The leading boundary is captured instead. */
 /* Obsidian does not count an all-digit #12 as a tag ("issue #12"), so a tag
@@ -51,10 +62,11 @@ const TAG_RE = /(^|\s)(#[^\s#]*[^\s#\d][^\s#]*)/g;
 /* A block id Obsidian can link to: " ^abc-1" at the very end of the line. */
 const BLOCK_RE = /(\s+)(\^[A-Za-z0-9-]+)[ \t]*$/;
 
-/* Code spans and wikilinks are quoted text: swap each for a placeholder of
-   private-use characters before looking for markers or tags, and put them
-   back afterwards. The placeholder holds no marker, no #, no space. */
-const SPAN_RE = /`[^`\n]*`|\[\[[^\]\n]*\]\]/g;
+/* Code spans, wikilinks, %%comments%% and [text](links) are quoted text: swap
+   each for a placeholder of private-use characters before looking for
+   markers or tags, and put them back afterwards. The placeholder holds no
+   marker, no #, no space. */
+const SPAN_RE = /`[^`\n]*`|\[\[[^\]\n]*\]\]|%%[^\n]*?%%|\[[^\]\n]*\]\([^)\n]*\)/g;
 const HOLE_RE = /\uE000(\d+)\uE001/g;
 function maskSpans(text) {
   const spans = [];
@@ -100,41 +112,63 @@ function parseLine(raw) {
     raw: String(raw), indent, marker,
     done: box.toLowerCase() === 'x',
     title: '', tags: tags.map(restore),
-    due: '', time: '', priority: 'normal', repeat: '',
+    due: '', time: '', priority: 'normal', repeat: '', onCompletion: '',
     start: '', scheduled: '', created: '', doneDate: '', id: '', blockedBy: '',
     blockId: b ? b[2] : '',
     group: '', line: -1,
   };
 
-  /* Anything a token's value does not account for goes back onto the title
-     rather than being dropped on the floor — and a marker whose value does
-     not parse at all goes back WITH its marker, or the next save would
-     quietly delete the emoji. */
-  let title = parts[0] || '';
-  const take = (mark, val, re) => {
+  /* The title is built from segments. Anything a token's value does not
+     account for goes back onto it rather than being dropped on the floor —
+     and a marker whose value does not parse at all goes back WITH its
+     marker, or the next save would quietly delete the emoji. A field that
+     turns up a second time demotes the earlier copy: its segment is swapped
+     for the whole original text, so the copy stays where it was written. */
+  const segs = [parts[0] || ''];
+  const held = {};
+  const claim = (kind, mark, val, leftover) => {
+    if (held[kind] !== undefined) segs[held[kind].at] = held[kind].full;
+    segs.push(leftover ? ' ' + leftover : '');
+    held[kind] = { at: segs.length - 1, full: ' ' + mark + val };
+  };
+  const text = (mark, val) => { segs.push(' ' + mark + val); return null; };
+  /* Read a value with `re`; null (and the marker kept as text) when it
+     does not parse. */
+  const take = (kind, mark, val, re) => {
     const g = re.exec(String(val || '').trim());
-    if (!g) { title += ' ' + mark + val; return ''; }
-    if (g[2]) title += ' ' + g[2];
+    if (!g) return text(mark, val);
+    claim(kind, mark, val, g[2]);
     return g[1];
   };
 
   for (let i = 1; i < parts.length; i += 2) {
     const mark = parts[i], val = parts[i + 1] === undefined ? '' : parts[i + 1];
     const key = mark.replace(/\uFE0F/g, '');
-    if (PRIORITY_EMOJI[key]) { t.priority = PRIORITY_EMOJI[key]; title += ' ' + val; continue; }
+    if (PRIORITY_EMOJI[key]) { claim('priority', mark, val, val.trim()); t.priority = PRIORITY_EMOJI[key]; continue; }
     switch (key) {
-      case '📅': case '📆': case '🗓': t.due = take(mark, val, DATE_HEAD) || t.due; break;
-      case '⏰': t.time = take(mark, val, TIME_HEAD) || t.time; break;
-      case '✅': t.doneDate = take(mark, val, DATE_HEAD) || t.doneDate; break;
-      case '➕': t.created = take(mark, val, DATE_HEAD) || t.created; break;
-      case '🛫': t.start = take(mark, val, DATE_HEAD) || t.start; break;
-      case '⏳': case '⌛': t.scheduled = take(mark, val, DATE_HEAD) || t.scheduled; break;
-      case '🆔': t.id = take(mark, val, WORD_HEAD) || t.id; break;
-      case '⛔': t.blockedBy = take(mark, val, WORD_HEAD) || t.blockedBy; break;
-      case '🔁': t.repeat = restore(squash(val)); break;
-      default: title += ' ' + mark + val;
+      case '📅': case '📆': case '🗓': t.due = take('due', mark, val, DATE_HEAD) || t.due; break;
+      case '⏰': t.time = take('time', mark, val, TIME_HEAD) || t.time; break;
+      /* A completion date only means something on a ticked line. */
+      case '✅': t.doneDate = (t.done ? take('doneDate', mark, val, DATE_HEAD) : text(mark, val)) || t.doneDate; break;
+      case '➕': t.created = take('created', mark, val, DATE_HEAD) || t.created; break;
+      case '🛫': t.start = take('start', mark, val, DATE_HEAD) || t.start; break;
+      case '⏳': case '⌛': t.scheduled = take('scheduled', mark, val, DATE_HEAD) || t.scheduled; break;
+      case '🆔': t.id = take('id', mark, val, WORD_HEAD) || t.id; break;
+      case '⛔': t.blockedBy = take('blockedBy', mark, val, LIST_HEAD) || t.blockedBy; break;
+      case '🔁': {
+        const r = take('repeat', mark, val, ANY_HEAD);
+        if (r) t.repeat = restore(squash(r));
+        break;
+      }
+      case '🏁': {
+        const c = take('onCompletion', mark, val, COMPLETION_HEAD);
+        if (c) t.onCompletion = c.toLowerCase();
+        break;
+      }
+      default: text(mark, val);
     }
   }
+  const title = segs.join('');
   t.title = restore(squash(title));
   t.id = restore(t.id);
   t.blockedBy = restore(t.blockedBy);
@@ -146,29 +180,48 @@ function parseLine(raw) {
    reminder produce byte-identical lines — a moving target here would show up
    as spurious diffs in the user's vault history. */
 function serializeLine(t) {
-  const indent = t.indent || '';
-  const marker = t.marker || '-';
+  /* A line is ONE line. Every text field is squashed to single spaces, so no
+     value from a caller — a repeat rule with a newline in it, say — can end
+     the line early and write a second one into the note. */
+  const indent = String(t.indent || '').replace(/[^ \t]/g, '');
+  const marker = /^(?:[-*+]|\d+\.)$/.test(t.marker || '') ? t.marker : '-';
   const box = t.done ? 'x' : ' ';
   const bits = [`${indent}${marker} [${box}]`];
   const title = squash(t.title);
   if (title) bits.push(title);
+  const put = (mark, v) => { const s = squash(v); if (s) bits.push(mark ? `${mark} ${s}` : s); };
   /* ⏰ goes BEFORE everything Tasks reads. Tasks peels fields off the END of
      the line and stops at the first thing that isn't one — a ⏰ after 📅
      hides the due date (and every field before it) from Tasks. */
-  if (t.time) bits.push('⏰ ' + t.time);
-  for (const tag of t.tags || []) bits.push(tag);
-  if (t.due) bits.push('📅 ' + t.due);
+  put('⏰', t.time);
+  for (const tag of tagList(t.tags)) bits.push(tag);
+  put('📅', t.due);
   const pe = EMOJI_FOR[t.priority || 'normal'];
   if (pe) bits.push(pe);
-  if (t.repeat) bits.push('🔁 ' + t.repeat);
-  if (t.start) bits.push('🛫 ' + t.start);
-  if (t.scheduled) bits.push('⏳ ' + t.scheduled);
-  if (t.created) bits.push('➕ ' + t.created);
-  if (t.id) bits.push('🆔 ' + t.id);
-  if (t.blockedBy) bits.push('⛔ ' + t.blockedBy);
-  if (t.done && t.doneDate) bits.push('✅ ' + t.doneDate);
-  if (t.blockId) bits.push(t.blockId);
+  put('🔁', t.repeat);
+  put('🏁', t.onCompletion);
+  put('🛫', t.start);
+  put('⏳', t.scheduled);
+  put('➕', t.created);
+  put('🆔', t.id);
+  put('⛔', t.blockedBy);
+  if (t.done) put('✅', t.doneDate);
+  put('', t.blockId);
   return bits.join(' ');
+}
+
+/* Tags as a caller may hand them over: a list or one string, with or without
+   the #. A tag cannot hold a space, so one becomes a hyphen; a bare "#" is
+   nothing and goes. */
+function tagList(tags) {
+  const list = Array.isArray(tags) ? tags : String(tags || '').split(/[\s,]+/);
+  const out = [];
+  for (const tag of list) {
+    let s = squash(tag).replace(/ /g, '-');
+    if (s && s[0] !== '#') s = '#' + s;
+    if (s.length > 1) out.push(s);
+  }
+  return out;
 }
 
 /* Obsidian Tasks reads a line from the END: it peels fields and tags off the
@@ -180,6 +233,7 @@ const TRAILING = [
   /\s*(?:🔺|⏫|🔼|🔽|⏬)\uFE0F?$/,
   /(?:📅|📆|🗓|✅|➕|🛫|⏳|⌛)\uFE0F? *\d{4}-\d{2}-\d{2}$/,
   /🔁\uFE0F? *[a-zA-Z0-9, !]+$/,
+  /🏁\uFE0F? *[a-zA-Z]+$/,
   /🆔\uFE0F? *[a-zA-Z0-9_-]+$/,
   /⛔\uFE0F? *[a-zA-Z0-9_-]+(?: *, *[a-zA-Z0-9_-]+ *)*$/,
   /(^|\s)#[^\s#]+$/,
@@ -201,13 +255,37 @@ function trailingRunStart(body) {
   return at;
 }
 
+/* Lines inside a fenced code block (``` or ~~~) are the note's quoted text,
+   not its structure: a "- [ ] example" in one is not a reminder and a "#"
+   line in one is not a heading. Follows CommonMark: a fence of three or more
+   of the same character closes only on a fence at least as long, a backtick
+   fence's info string cannot hold a backtick, and one left open runs to the
+   end of the note. Returns one flag per line; the fence lines count as inside. */
+function fencedLines(lines) {
+  const flags = [];
+  let open = null;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(lines[i]);
+    if (!open) {
+      if (m && !(m[1][0] === '`' && m[2].indexOf('`') !== -1)) { open = { ch: m[1][0], len: m[1].length }; flags.push(true); }
+      else flags.push(false);
+      continue;
+    }
+    flags.push(true);
+    if (m && m[1][0] === open.ch && m[1].length >= open.len && !m[2].trim()) open = null;
+  }
+  return flags;
+}
+
 /* Read a whole note. Headings become groups — the user's own structure, not
    a taxonomy this plugin imposes. */
 function parseNote(text) {
   const lines = String(text || '').split(/\r?\n/);
+  const fenced = fencedLines(lines);
   const out = [];
   let group = '';
   for (let i = 0; i < lines.length; i++) {
+    if (fenced[i]) continue;
     if (HEADING_RE.test(lines[i])) {
       const g = GROUP_RE.exec(lines[i]);
       group = g ? g[1].trim() : '';
@@ -233,8 +311,10 @@ function groupsOf(text) {
    the sidebar offers, so a list made a moment ago shows before it has rows. */
 function listsOf(text) {
   const seen = [];
-  for (const l of String(text || '').split(/\r?\n/)) {
-    const g = GROUP_RE.exec(l);
+  const lines = String(text || '').split(/\r?\n/);
+  const fenced = fencedLines(lines);
+  for (let i = 0; i < lines.length; i++) {
+    const g = fenced[i] ? null : GROUP_RE.exec(lines[i]);
     if (g && seen.indexOf(g[1].trim()) === -1) seen.push(g[1].trim());
   }
   return seen;
@@ -242,6 +322,6 @@ function listsOf(text) {
 
 module.exports = {
   parseLine, serializeLine, parseNote, groupsOf, listsOf, extractTags,
-  maskSpans, splitBlock, trailingRunStart,
+  maskSpans, splitBlock, trailingRunStart, fencedLines,
   rank, PRIORITIES, PRIORITY_EMOJI, EMOJI_FOR, LINE_RE, HEADING_RE, GROUP_RE,
 };

@@ -52,4 +52,14 @@ assert.strictEqual(D.isISO('2027-02-29'), false, 'no 29 Feb outside a leap year'
 assert.strictEqual(D.isISO('2028-02-29'), true);
 assert.strictEqual(D.isISO('2026-04-31'), false);
 assert.strictEqual(D.isISO('2026-12-31'), true);
+
+/* The one reader for a clock setting. Notices and the phone alarm both use it,
+   so "8am" can no longer mean one thing in Obsidian and another on the phone. */
+for (const [typed, want] of [
+  ['7:30', '07:30'], ['07:30', '07:30'], ['21:00', '21:00'], ['0:05', '00:05'], ['23:59', '23:59'],
+  ['8am', '08:00'], ['9pm', '21:00'], ['9:30pm', '21:30'], ['12am', '00:00'], ['12pm', '12:00'], ['12:15 AM', '00:15'],
+  ['21h00', '21:00'], ['21h', '21:00'], ['9h30', '09:30'], ['  9 am ', '09:00'],
+]) assert.strictEqual(D.parseClock(typed), want, `"${typed}" reads as ${want}`);
+for (const bad of ['', '   ', 'abc', '9', '24:00', '25:00', '9:60', '13pm', '0am', '13am', '9:5', '8 o\'clock', null, undefined, 930])
+  assert.strictEqual(D.parseClock(bad), '', `"${bad}" is not a clock time`);
 console.log('dates OK');
